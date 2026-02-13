@@ -339,6 +339,46 @@ def get_student_by_id_c2(student_id, token=None):
     except Exception as ex:
         logging.error(f"C2 unexpected error: {ex}")
         return None
+# Insert student attednance:
+def insert_student_attendance(attendance_data, token=None):
+    """
+    Insert student attendance record into Binus School API
+    Args:
+        attendance_data (dict): Attendance data to insert
+        token (str): Authorization token (will get new one if not provided)
+    Returns:
+        bool: True if insertion was successful, False otherwise
+    """
+    # Get token if not provided
+    if token is None:
+        token = get_auth_token()
+        if token is None:
+            return False
+    url = "http://binusian.ws/binusschool/bss-add-simprug-attendance-fr"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    logging.info(f"Inserting student attendance: {attendance_data}")
+    try:
+        response = requests.post(url, headers=headers, timeout=10, json=attendance_data)
+        logging.debug(f"Attendance insert response status: {response.status_code}")
+        response.raise_for_status()
+        result = response.json()
+        if result.get("resultCode") == 200:
+            logging.info("Student attendance inserted successfully")
+            return True
+        else:
+            error_msg = result.get("errorMessage", "Unknown error")
+            logging.error(f"API error on insert - Code: {result.get('resultCode')}, Message: {error_msg}")
+            return False
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Request failed while inserting attendance: {e}")
+        return False
+    except Exception as ex:
+        logging.error(f"An error occurred while inserting attendance: {ex}")
+        return False
+
 if __name__ == "__main__":
     # Option 2: Run individual function
     get_student_photos(grade="1", homeroom="1A")

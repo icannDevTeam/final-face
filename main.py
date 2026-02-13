@@ -8,6 +8,8 @@ import hashlib
 import logging
 from datetime import datetime, time as dt_time
 import argparse
+from dotenv import load_dotenv
+load_dotenv()
 import threading
 from collections import deque
 import queue
@@ -21,13 +23,19 @@ try:
 except Exception:
     FIREBASE_ENABLED = False
 
+# Optional Binus School API integration (attendance uploads)
+try:
+    import api_integrate
+    API_INTEGRATE_ENABLED = True
+except Exception:
+    API_INTEGRATE_ENABLED = False
+
 # Third-party imports
 import cv2
 import numpy as np
 import json
 import concurrent.futures
-# Add SciPy for mathematical operations
-import scipy.spatial as spatial
+# SciPy removed — using numpy for distance calculations
 
 # Try to import dlib for 68-point landmarks (HRNet removed)
 try:
@@ -82,6 +90,7 @@ CONFIG = {
     "latest_login_time": "07:30",
     "duplicate_detection_window": 300,  # 5 minutes window to prevent duplicates
     "upload_attendance_to_firebase": True,  # Upload daily JSON to Firebase Firestore when available
+    "upload_attendance_to_api": True,         # Upload attendance to Binus School API when available
     
     # Performance settings
     "device": "cuda" if GPU_AVAILABLE else "cpu",
@@ -219,6 +228,19 @@ def upload_attendance_to_firebase(local_path, date_only):
         print(f"☁️ Uploaded attendance to Firestore: attendance/{date_only}")
     except Exception as e:
         print(f"⚠️ Failed to upload attendance to Firestore: {e}")
+
+
+def _upload_attendance_to_api(payload):
+    """Upload a single attendance record to the Binus School API (runs in background thread)."""
+    try:
+        success = api_integrate.insert_student_attendance(payload)
+        if success:
+            print(f"☁️ API attendance uploaded: {payload.get('studentName', '?')}")
+        else:
+            print(f"⚠️ API attendance upload returned failure for {payload.get('studentName', '?')}")
+    except Exception as e:
+        print(f"⚠️ API attendance upload error: {e}")
+
 
 # JSON serialization helper to handle NumPy types cleanly
 def _json_fallback(obj):
@@ -1095,6 +1117,25 @@ def log_attendance(name, class_name=None, confidence=0.0, quality_score=0.0, sec
         if CONFIG.get("upload_attendance_to_firebase", False):
             upload_attendance_to_firebase(daily_path, date_only)
 
+        # Upload to Binus School API (non-blocking)
+        if CONFIG.get("upload_attendance_to_api", False) and API_INTEGRATE_ENABLED:
+            try:
+                api_payload = {
+                    "studentName": name,
+                    "class": class_name or "",
+                    "timestamp": timestamp,
+                    "status": status,
+                    "late": is_late,
+                    "confidence": py_conf,
+                }
+                threading.Thread(
+                    target=_upload_attendance_to_api,
+                    args=(api_payload,),
+                    daemon=True,
+                ).start()
+            except Exception as api_err:
+                print(f"⚠️ Failed to queue API attendance upload: {api_err}")
+
         # Update local tracking
         attendance[attendance_key] = True
         attendance_timestamps[attendance_key] = current_timestamp
@@ -1457,9 +1498,9 @@ def calculate_ear(eye_landmarks):
         return 1.0
     
     try:
-        A = spatial.distance.euclidean(eye_landmarks[1], eye_landmarks[5])
-        B = spatial.distance.euclidean(eye_landmarks[2], eye_landmarks[4])
-        C = spatial.distance.euclidean(eye_landmarks[0], eye_landmarks[3])
+        A = np.linalg.norm(np.array(eye_landmarks[1]) - np.array(eye_landmarks[5]))
+        B = np.linalg.norm(np.array(eye_landmarks[2]) - np.array(eye_landmarks[4]))
+        C = np.linalg.norm(np.array(eye_landmarks[0]) - np.array(eye_landmarks[3]))
         
         ear = (A + B) / (2.0 * C) if C > 0 else 1.0
         return ear
@@ -2051,7 +2092,10 @@ def main():
     
     # PIN features removed: no PIN loading
     
-    video_capture = cv2.VideoCapture(0)
+    rtsp_url = os.getenv("HIKVISION_RTSP_URL", "0")
+    source = rtsp_url if rtsp_url != "0" else 0
+    print(f"📷 Opening video source: {source}")
+    video_capture = cv2.VideoCapture(source)
     if not video_capture.isOpened():
         print("❌ Error: Unable to access the camera.")
         return
