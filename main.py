@@ -155,6 +155,9 @@ CONFIG = {
     "challenge_response": True,            # Random challenges (smile, nod, etc.)
 }
 
+# Stop the app after 8 hours (in seconds)
+APP_TIMEOUT_SECONDS = 8 * 60 * 60
+
 # Motivational quotes based on BINUS Values and IB Learner Profile
 MOTIVATIONAL_QUOTES = [
 "Strive for excellence.", "Embrace innovation", "Persevere daily.",
@@ -2084,9 +2087,14 @@ def main():
     )
     
     print("✅ Ultra-fast facial recognition system ready!")
+
+    runtime_start = time.time()
     
     try:
         while True:
+            if time.time() - runtime_start >= APP_TIMEOUT_SECONDS:
+                print("⏲️ Runtime limit reached (8 hours). Shutting down.")
+                break
             frame_start_time = time.time()
             
             ret, frame = video_capture.read()
