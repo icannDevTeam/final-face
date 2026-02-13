@@ -135,90 +135,101 @@ def enroll_local_students(
         if not student_name:
             continue
         
-        # Find the first valid image file
-        for filename in filenames:
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                image_path = os.path.join(dirpath, filename)
-                print(f"Processing: Class={class_name}, Student={student_name}, File={image_path}")
+        # Sort images: prioritize front-facing, then other angles
+        image_files = sorted(
+            [f for f in filenames if f.lower().endswith(('.png', '.jpg', '.jpeg'))],
+            key=lambda f: (0 if '_front_' in f.lower() else 1, f)
+        )
+        
+        enrolled = False
+        for filename in image_files:
+            if enrolled:
+                break
+                
+            image_path = os.path.join(dirpath, filename)
+            print(f"Processing: Class={class_name}, Student={student_name}, File={image_path}")
 
-                try:
-                    # Load the image
-                    image = cv2.imread(image_path)
-                    if image is None:
-                        print(f"  ⚠️ Warning: Unable to read image {image_path}, skipping.")
+            try:
+                # Load the image
+                image = cv2.imread(image_path)
+                if image is None:
+                    print(f"  ⚠️ Warning: Unable to read image {image_path}, skipping.")
+                    continue
+
+                # Initialize predictor and HOG detector once
+                global _ENROLL_PREDICTOR, _ENROLL_HOG_DET
+                if '_ENROLL_PREDICTOR' not in globals():
+                    _ENROLL_PREDICTOR = None
+                if '_ENROLL_HOG_DET' not in globals():
+                    _ENROLL_HOG_DET = None
+                if '_ENROLL_CNN_MODEL' not in globals():
+                    _ENROLL_CNN_MODEL = None
+
+                if DLIB_AVAILABLE and _ENROLL_PREDICTOR is None:
+                    if os.path.exists(DLIB_MODEL_PATH):
+                        _ENROLL_PREDICTOR = dlib.shape_predictor(DLIB_MODEL_PATH)
+                    else:
+                        print(f"  ❌ Missing dlib landmark model at '{DLIB_MODEL_PATH}'. Cannot compute embeddings.")
+
+                if DLIB_AVAILABLE and _ENROLL_HOG_DET is None:
+                    try:
+                        _ENROLL_HOG_DET = dlib.get_frontal_face_detector()
+                    except Exception:
+                        _ENROLL_HOG_DET = None
+
+                if DLIB_AVAILABLE and _ENROLL_CNN_MODEL is None:
+                    if os.path.exists(DLIB_FACE_REC_MODEL_PATH):
+                        try:
+                            _ENROLL_CNN_MODEL = dlib.face_recognition_model_v1(DLIB_FACE_REC_MODEL_PATH)
+                        except Exception as cnn_ex:
+                            print(f"  ⚠️ Unable to load face recognition model: {cnn_ex}")
+                            _ENROLL_CNN_MODEL = None
+                    else:
+                        if not _CNN_WARNING_EMITTED:
+                            print(f"  ⚠️ Face recognition model not found at '{DLIB_FACE_REC_MODEL_PATH}'. CNN embeddings will be skipped.")
+                            _CNN_WARNING_EMITTED = True
+
+                # Detect faces using HOG — try upsample=0 first, then upsample=1
+                face_locations = []
+                if _ENROLL_HOG_DET is not None:
+                    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                    dets = _ENROLL_HOG_DET(gray, 0)
+                    if not dets:
+                        dets = _ENROLL_HOG_DET(gray, 1)
+                    for r in dets:
+                        face_locations.append((r.top(), r.right(), r.bottom(), r.left()))
+                else:
+                    print("  ❌ No dlib HOG detector available. Install dlib to proceed.")
+
+                if len(face_locations) == 1 and _ENROLL_PREDICTOR is not None:
+                    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                    top, right, bottom, left = face_locations[0]
+                    rect = dlib.rectangle(int(left), int(top), int(right), int(bottom))
+                    shape = _ENROLL_PREDICTOR(gray, rect)
+
+                    encoding = _compute_landmark_embedding_from_bbox(rgb, face_locations[0], _ENROLL_PREDICTOR, shape)
+                    if encoding is None:
+                        print("  ⚠️ Could not compute landmark embedding. Trying next...")
                         continue
 
-                    # Initialize predictor and HOG detector once
-                    global _ENROLL_PREDICTOR, _ENROLL_HOG_DET
-                    if '_ENROLL_PREDICTOR' not in globals():
-                        _ENROLL_PREDICTOR = None
-                    if '_ENROLL_HOG_DET' not in globals():
-                        _ENROLL_HOG_DET = None
-                    if '_ENROLL_CNN_MODEL' not in globals():
-                        _ENROLL_CNN_MODEL = None
+                    cnn_encoding = _compute_cnn_embedding_from_shape(rgb, shape, _ENROLL_CNN_MODEL)
 
-                    if DLIB_AVAILABLE and _ENROLL_PREDICTOR is None:
-                        if os.path.exists(DLIB_MODEL_PATH):
-                            _ENROLL_PREDICTOR = dlib.shape_predictor(DLIB_MODEL_PATH)
-                        else:
-                            print(f"  ❌ Missing dlib landmark model at '{DLIB_MODEL_PATH}'. Cannot compute embeddings.")
-
-                    if DLIB_AVAILABLE and _ENROLL_HOG_DET is None:
-                        try:
-                            _ENROLL_HOG_DET = dlib.get_frontal_face_detector()
-                        except Exception:
-                            _ENROLL_HOG_DET = None
-
-                    if DLIB_AVAILABLE and _ENROLL_CNN_MODEL is None:
-                        if os.path.exists(DLIB_FACE_REC_MODEL_PATH):
-                            try:
-                                _ENROLL_CNN_MODEL = dlib.face_recognition_model_v1(DLIB_FACE_REC_MODEL_PATH)
-                            except Exception as cnn_ex:
-                                print(f"  ⚠️ Unable to load face recognition model: {cnn_ex}")
-                                _ENROLL_CNN_MODEL = None
-                        else:
-                            if not _CNN_WARNING_EMITTED:
-                                print(f"  ⚠️ Face recognition model not found at '{DLIB_FACE_REC_MODEL_PATH}'. CNN embeddings will be skipped.")
-                                _CNN_WARNING_EMITTED = True
-
-                    # Detect faces using HOG only
-                    face_locations = []
-                    if _ENROLL_HOG_DET is not None:
-                        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                        dets = _ENROLL_HOG_DET(gray, 0)
-                        for r in dets:
-                            face_locations.append((r.top(), r.right(), r.bottom(), r.left()))
-                    else:
-                        print("  ❌ No dlib HOG detector available. Install dlib to proceed.")
-
-                    if len(face_locations) == 1 and _ENROLL_PREDICTOR is not None:
-                        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                        top, right, bottom, left = face_locations[0]
-                        rect = dlib.rectangle(int(left), int(top), int(right), int(bottom))
-                        shape = _ENROLL_PREDICTOR(gray, rect)
-
-                        encoding = _compute_landmark_embedding_from_bbox(rgb, face_locations[0], _ENROLL_PREDICTOR, shape)
-                        if encoding is None:
-                            print("  ⚠️ Could not compute landmark embedding. Skipping.")
-                            continue
-
-                        cnn_encoding = _compute_cnn_embedding_from_shape(rgb, shape, _ENROLL_CNN_MODEL)
-
-                        known_face_encodings.append(encoding)
-                        known_face_cnn_encodings.append(cnn_encoding)
-                        known_face_names.append(student_name)
-                        known_face_classes.append(class_name)
-                        print(f"  ✅ Successfully encoded {student_name}.")
-                    elif len(face_locations) > 1:
-                        print(f"  ⚠️ Warning: Found {len(face_locations)} faces. Only use photos with ONE face. Skipping.")
-                    else:
-                        print(f"  ⚠️ Warning: No faces detected or landmark model missing for {image_path}. Skipping.")
-                except Exception as e:
-                    print(f"  ❌ Error processing {image_path}: {e}")
-                
-                # Since multiple images may exist, we use only the first valid one per student
-                break 
+                    known_face_encodings.append(encoding)
+                    known_face_cnn_encodings.append(cnn_encoding)
+                    known_face_names.append(student_name)
+                    known_face_classes.append(class_name)
+                    print(f"  ✅ Successfully encoded {student_name}.")
+                    enrolled = True
+                elif len(face_locations) > 1:
+                    print(f"  ⚠️ Warning: Found {len(face_locations)} faces. Trying next...")
+                else:
+                    print(f"  ⚠️ No face detected in {os.path.basename(image_path)}. Trying next...")
+            except Exception as e:
+                print(f"  ❌ Error processing {image_path}: {e}")
+        
+        if not enrolled:
+            print(f"  ❌ Could not enroll {student_name} — no usable face found in any image.")
 
     # --- Save the metrics to the pickle file ---
     print(f"Enrollment complete. Found {len(known_face_encodings)} students.")

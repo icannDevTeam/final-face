@@ -1,5 +1,25 @@
-.env
-venv/
-encodings.pickle
+# Large model files
+*.dat
+*.pickle
+*.log
+
+# Face datasets (stored in Firebase)
+face_dataset/
+
+# Attendance data (generated)
 data/
+
+# Python cache
 __pycache__/
+*.pyc
+
+# Backups
+*.json.bak
+
+# Secrets
+facial-attendance-binus-firebase-adminsdk.json
+.env
+.env.local
+
+# OS
+.DS_Store
