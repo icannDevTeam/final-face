@@ -352,10 +352,20 @@ def save_local(name: str, emp_no: str, timestamp: str, status: str, date_str: st
 
 
 def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str: str):
-    """Write attendance record to Firestore."""
+    """Write attendance record to Firestore, enriched with class/grade metadata."""
     db = get_firestore()
     if not db:
         return
+
+    # Look up class/grade from student metadata
+    homeroom = ""
+    grade = ""
+    if METADATA_ENABLED:
+        meta = student_metadata.get_student(emp_no)
+        if meta:
+            homeroom = meta.get("homeroom", "")
+            grade = meta.get("grade", "")
+
     try:
         doc_ref = db.collection("attendance").document(date_str).collection("records").document(emp_no)
         doc_ref.set({
@@ -364,6 +374,8 @@ def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str:
             "timestamp": timestamp,
             "status": status,
             "late": status == "Late",
+            "homeroom": homeroom,
+            "grade": grade,
             "updatedAt": datetime.now(WIB).isoformat(),
         })
         # Also update the day summary
