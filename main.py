@@ -30,6 +30,14 @@ try:
 except Exception:
     API_INTEGRATE_ENABLED = False
 
+# Student metadata mapping (employeeNo → BINUS IDs)
+try:
+    import student_metadata as _student_metadata
+    STUDENT_METADATA_ENABLED = True
+except Exception:
+    _student_metadata = None
+    STUDENT_METADATA_ENABLED = False
+
 # Third-party imports
 import cv2
 import numpy as np
@@ -88,7 +96,7 @@ CONFIG = {
     
     # Attendance settings
     "latest_login_time": "07:30",
-    "duplicate_detection_window": 300,  # 5 minutes window to prevent duplicates
+    "duplicate_detection_window": 28800,  # 8 hours — one-time attendance per student per session
     "upload_attendance_to_firebase": True,  # Upload daily JSON to Firebase Firestore when available
     "upload_attendance_to_api": True,         # Upload attendance to Binus School API when available
     
@@ -184,6 +192,11 @@ thank_you_message = {
     'duration': 3.0, 'quote': '', 'status': ''
 }
 
+# "Already logged" brief overlay for returning students
+already_logged_message = {
+    'active': False, 'name': '', 'time': 0, 'duration': 2.0
+}
+
 # Security and quality assessment globals
 face_quality_assessor = None
 liveness_detector = None
@@ -231,13 +244,20 @@ def upload_attendance_to_firebase(local_path, date_only):
 
 
 def _upload_attendance_to_api(payload):
-    """Upload a single attendance record to the Binus School API (runs in background thread)."""
+    """Upload a single attendance record to the Binus School API (runs in background thread).
+
+    Expects payload with keys: IdStudent, IdBinusian, ImageDesc, UserAction.
+    """
     try:
+        student_name = payload.pop("_studentName", "?")
+        if not payload.get("IdStudent"):
+            print(f"⚠️ API attendance skipped for {student_name}: no IdStudent in metadata")
+            return
         success = api_integrate.insert_student_attendance(payload)
         if success:
-            print(f"☁️ API attendance uploaded: {payload.get('studentName', '?')}")
+            print(f"☁️ API attendance uploaded: {student_name} (ID:{payload.get('IdStudent')})")
         else:
-            print(f"⚠️ API attendance upload returned failure for {payload.get('studentName', '?')}")
+            print(f"⚠️ API attendance upload returned failure for {student_name}")
     except Exception as e:
         print(f"⚠️ API attendance upload error: {e}")
 
@@ -1022,22 +1042,55 @@ def handle_mouse_click(event, x, y, flags, param):
     return  # No-op; PIN UI removed
 
 
+def _load_today_attendance():
+    """Load today's attendance from disk so dedup survives restarts."""
+    date_only = datetime.now().strftime("%Y-%m-%d")
+    daily_path = os.path.join("data", "attendance", f"{date_only}.json")
+    if not os.path.isfile(daily_path):
+        return
+    try:
+        with open(daily_path, "r", encoding="utf-8") as f:
+            day_data = json.load(f) or {}
+        window = CONFIG.get("duplicate_detection_window", 28800)
+        now_ts = datetime.now().timestamp()
+        for student_name, record in day_data.items():
+            ts_str = record.get("timestamp", "")
+            cls = record.get("class", "")
+            att_key = f"{cls}/{student_name}" if cls else student_name
+            try:
+                rec_ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").timestamp()
+            except Exception:
+                rec_ts = now_ts  # fallback: treat as recent
+            if now_ts - rec_ts < window:
+                attendance[att_key] = True
+                attendance_timestamps[att_key] = rec_ts
+        if day_data:
+            print(f"🔄 Restored {len(day_data)} attendance records from {date_only}.json (dedup window {window // 3600}h)")
+    except Exception as e:
+        print(f"⚠️ Could not restore today's attendance from disk: {e}")
+
+
 def log_attendance(name, class_name=None, confidence=0.0, quality_score=0.0, security_score=0.0):
-    """Record attendance locally (JSON), with duplicate prevention and basic checks."""
+    """Record attendance locally (JSON), with 8-hour duplicate prevention and basic checks."""
     attendance_key = name
     if class_name:
         attendance_key = f"{class_name}/{name}" 
     
     current_time = datetime.now()
     current_timestamp = current_time.timestamp()
+    window = CONFIG.get("duplicate_detection_window", 28800)  # 8 hours default
     
+    # Check in-memory dedup first
     if attendance_key in attendance_timestamps:
         last_login_time = attendance_timestamps[attendance_key]
         time_diff = current_timestamp - last_login_time
         
-        if time_diff < CONFIG.get("duplicate_detection_window", 300):
-            minutes_remaining = int((CONFIG.get("duplicate_detection_window", 300) - time_diff) / 60)
-            print(f"⚠️ {name} already logged in recently. Please wait {minutes_remaining} more minutes.")
+        if time_diff < window:
+            hours_remaining = (window - time_diff) / 3600
+            if hours_remaining >= 1:
+                print(f"⚠️ {name} already logged in. Next allowed in {hours_remaining:.1f} hours.")
+            else:
+                print(f"⚠️ {name} already logged in. Next allowed in {int((window - time_diff) / 60)} min.")
             return False
     
     min_confidence = CONFIG.get("min_recognition_threshold", 0.65)
@@ -1057,7 +1110,7 @@ def log_attendance(name, class_name=None, confidence=0.0, quality_score=0.0, sec
         return False
         
     if attendance_key in attendance:
-        return False  # Already logged today
+        return False  # Already logged within window
     
     timestamp = current_time.strftime("%Y-%m-%d %H:%M:%S")
     date_only = current_time.strftime("%Y-%m-%d")
@@ -1120,13 +1173,22 @@ def log_attendance(name, class_name=None, confidence=0.0, quality_score=0.0, sec
         # Upload to Binus School API (non-blocking)
         if CONFIG.get("upload_attendance_to_api", False) and API_INTEGRATE_ENABLED:
             try:
+                # Look up BINUS student IDs from metadata
+                id_student = ""
+                id_binusian = ""
+                if STUDENT_METADATA_ENABLED and _student_metadata:
+                    # Try by name first (main.py uses names, not employeeNo hashes)
+                    meta = _student_metadata.find_by_name(name)
+                    if meta:
+                        id_student = meta.get("idStudent", "")
+                        id_binusian = meta.get("idBinusian", "")
+
                 api_payload = {
-                    "studentName": name,
-                    "class": class_name or "",
-                    "timestamp": timestamp,
-                    "status": status,
-                    "late": is_late,
-                    "confidence": py_conf,
+                    "IdStudent": id_student,
+                    "IdBinusian": id_binusian,
+                    "ImageDesc": "-",
+                    "UserAction": os.getenv("USER_ACTION", "TEACHER7"),
+                    "_studentName": name,  # stripped before sending
                 }
                 threading.Thread(
                     target=_upload_attendance_to_api,
@@ -1250,6 +1312,48 @@ def display_thank_you_message(frame):
         thank_you_message['active'] = False
         
     return frame
+
+
+# Throttle map so the overlay doesn't fire every frame for the same person
+_already_logged_last_shown = {}
+
+def _show_already_logged_overlay(name, class_name=None):
+    """Trigger the 'Already Logged' overlay, throttled to once per 10 seconds per person."""
+    global already_logged_message
+    display_name = f"{name} ({class_name})" if class_name else name
+    now = time.time()
+    if display_name in _already_logged_last_shown:
+        if now - _already_logged_last_shown[display_name] < 10:
+            return  # throttle
+    _already_logged_last_shown[display_name] = now
+    already_logged_message = {
+        'active': True, 'name': display_name,
+        'time': now, 'duration': 2.0
+    }
+
+
+def display_already_logged_message(frame):
+    """Display a brief 'Already Logged' banner when a returning student is detected."""
+    if not already_logged_message['active']:
+        return frame
+
+    elapsed = time.time() - already_logged_message['time']
+    if elapsed < already_logged_message['duration']:
+        # Semi-transparent orange banner at the top
+        h, w = frame.shape[:2]
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (40, 10), (w - 40, 70), (0, 165, 255), -1)
+        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+        cv2.putText(frame, f"{already_logged_message['name']} - Already Logged",
+                    (60, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, "Attendance already recorded for this session",
+                    (60, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    else:
+        already_logged_message['active'] = False
+
+    return frame
+
 
  # HRNet landmark drawing removed; dlib-based blink UI handles visualization.
 
@@ -2090,6 +2194,9 @@ def main():
     if CONFIG["preload_known_faces"]:
         preload_face_encodings()
     
+    # Restore today's attendance from disk so dedup survives restarts
+    _load_today_attendance()
+    
     # PIN features removed: no PIN loading
     
     rtsp_url = os.getenv("HIKVISION_RTSP_URL", "0")
@@ -2331,12 +2438,15 @@ def main():
                     else:
                         attendance_key = f"{class_name}/{name}" if class_name else name
                         if attendance_key in attendance:
-                            color = (255, 165, 0); label = f"{name} - Logged"
+                            color = (255, 165, 0)  # Orange for already logged
+                            cls_tag = f" ({class_name})" if class_name else ""
+                            label = f"{name}{cls_tag} - Already Logged \u2713"
+                            # Trigger brief overlay (throttled to once per 10s per person)
+                            _show_already_logged_overlay(name, class_name)
                         else:
-                            color = (0, 255, 0); label = f"{name} ({confidence:.2f})"
-                        
-                        if class_name and name != "Unknown":
-                            label = f"{name} ({class_name}) ({confidence:.2f})"
+                            color = (0, 255, 0)
+                            cls_tag = f" ({class_name})" if class_name else ""
+                            label = f"{name}{cls_tag} ({confidence:.2f})"
                     
                     if CONFIG.get("show_face_boxes", True):
                         cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
@@ -2365,6 +2475,7 @@ def main():
                             (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, fps_color, 2)
             
             frame = display_enhanced_performance_metrics(frame)
+            frame = display_already_logged_message(frame)
             frame = display_thank_you_message(frame)
             
             frame_time = time.time() - frame_start_time

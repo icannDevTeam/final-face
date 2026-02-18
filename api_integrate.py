@@ -339,38 +339,68 @@ def get_student_by_id_c2(student_id, token=None):
     except Exception as ex:
         logging.error(f"C2 unexpected error: {ex}")
         return None
-# Insert student attednance:
+# Insert student attendance (B.2 API spec):
 def insert_student_attendance(attendance_data, token=None):
     """
-    Insert student attendance record into Binus School API
+    Insert student attendance record into the e-Desk database via Binus School API.
+
+    B.2 API spec:
+      POST http://binusian.ws/binusschool/bss-add-simprug-attendance-fr
+      Body: { "IdStudent": str, "IdBinusian": str, "ImageDesc": str, "UserAction": str }
+      Success: { "isSuccess": true, "statusCode": 200, "message": "OK", ... }
+
     Args:
-        attendance_data (dict): Attendance data to insert
-        token (str): Authorization token (will get new one if not provided)
+        attendance_data (dict): Must contain at minimum "IdStudent" and "IdBinusian".
+            Optional keys: "ImageDesc" (default "-"), "UserAction" (default from env or "TEACHER7").
+        token (str): Bearer token (auto-fetched if not provided).
     Returns:
-        bool: True if insertion was successful, False otherwise
+        bool: True if insertion was successful, False otherwise.
     """
     # Get token if not provided
     if token is None:
         token = get_auth_token()
         if token is None:
             return False
+
     url = "http://binusian.ws/binusschool/bss-add-simprug-attendance-fr"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-    logging.info(f"Inserting student attendance: {attendance_data}")
+
+    # Build body per B.2 spec
+    body = {
+        "IdStudent": str(attendance_data.get("IdStudent", "")),
+        "IdBinusian": str(attendance_data.get("IdBinusian", "")),
+        "ImageDesc": str(attendance_data.get("ImageDesc", "-")),
+        "UserAction": str(attendance_data.get("UserAction", os.getenv("USER_ACTION", "TEACHER7"))),
+    }
+
+    logging.info(f"Inserting student attendance: {body}")
     try:
-        response = requests.post(url, headers=headers, timeout=10, json=attendance_data)
+        response = requests.post(url, headers=headers, timeout=30, json=body)
         logging.debug(f"Attendance insert response status: {response.status_code}")
         response.raise_for_status()
         result = response.json()
-        if result.get("resultCode") == 200:
-            logging.info("Student attendance inserted successfully")
+
+        # Handle both response formats:
+        # UAT/sandbox: {"attendanceFaceRecognitionResponse": {"success": true}, "resultCode": 200}
+        # Production:  {"isSuccess": true, "statusCode": 200, "message": "OK"}
+        afr = result.get("attendanceFaceRecognitionResponse", {})
+        is_success = (
+            result.get("isSuccess") is True
+            or result.get("statusCode") == 200
+            or result.get("resultCode") == 200
+            or (isinstance(afr, dict) and afr.get("success") is True)
+        )
+
+        if is_success:
+            msg = afr.get("msg") or result.get("message") or result.get("errorMessage") or "OK"
+            logging.info(f"Student attendance inserted successfully: {msg}")
             return True
         else:
-            error_msg = result.get("errorMessage", "Unknown error")
-            logging.error(f"API error on insert - Code: {result.get('resultCode')}, Message: {error_msg}")
+            error_msg = result.get("message") or result.get("errorMessage") or result.get("errors") or "Unknown error"
+            logging.error(f"API error on insert — {error_msg}  (full: {result})")
             return False
     except requests.exceptions.RequestException as e:
         logging.error(f"Request failed while inserting attendance: {e}")

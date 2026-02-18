@@ -53,6 +53,7 @@ HIKVISION_PASS = os.getenv("HIKVISION_PASS", "password.123")
 DATA_DIR = Path(__file__).parent / "data" / "attendance"
 CUTOFF_HOUR = 8
 CUTOFF_MINUTE = 15  # 08:15 = late threshold
+DUPLICATE_WINDOW = 28800  # 8 hours — one-time attendance per session
 
 WIB = timezone(timedelta(hours=7))  # UTC+7
 
@@ -153,6 +154,107 @@ def get_firestore():
     except Exception as e:
         print(f"  ⚠ Firebase unavailable: {e}")
         return None
+
+
+# ─── Binus School API (optional) ─────────────────────────────────────────────
+
+try:
+    import api_integrate
+    API_INTEGRATE_ENABLED = True
+except Exception:
+    API_INTEGRATE_ENABLED = False
+
+# Student metadata mapping (employeeNo → BINUS IDs)
+try:
+    import student_metadata
+    METADATA_ENABLED = True
+except Exception:
+    METADATA_ENABLED = False
+
+
+def upload_to_binus_api(name: str, emp_no: str, class_name: str, timestamp: str, status: str, is_late: bool):
+    """Upload attendance record to Binus School API.
+
+    Looks up the student's IdStudent and IdBinusian from the metadata mapping
+    (populated during enrollment), then calls the B.2 attendance insert API.
+    """
+    if not API_INTEGRATE_ENABLED:
+        print(f"  ⚠ Binus API module not available")
+        return False
+
+    # Look up student metadata to get BINUS IDs
+    id_student = ""
+    id_binusian = ""
+
+    if METADATA_ENABLED:
+        meta = student_metadata.get_student(emp_no)
+        if meta:
+            id_student = meta.get("idStudent", "")
+            id_binusian = meta.get("idBinusian", "")
+            print(f"  📎 Metadata found: IdStudent={id_student}, IdBinusian={id_binusian}")
+        else:
+            # Try lookup by name as fallback
+            meta = student_metadata.find_by_name(name)
+            if meta:
+                id_student = meta.get("idStudent", "")
+                id_binusian = meta.get("idBinusian", "")
+                print(f"  📎 Metadata found (by name): IdStudent={id_student}, IdBinusian={id_binusian}")
+
+    if not id_student:
+        print(f"  ⚠ Binus API: No IdStudent found for {name} (emp#{emp_no}). Skipping API upload.")
+        print(f"    → Re-enroll this student to populate metadata, or add manually to data/student_metadata.json")
+        return False
+
+    try:
+        payload = {
+            "IdStudent": id_student,
+            "IdBinusian": id_binusian,
+            "ImageDesc": "-",
+            "UserAction": os.getenv("USER_ACTION", "TEACHER7"),
+        }
+        print(f"  ☁️  Binus API: Sending attendance for {name} (ID:{id_student})...")
+        success = api_integrate.insert_student_attendance(payload)
+        if success:
+            print(f"  ☁️  Binus API: ✓ Attendance recorded for {name}")
+            return True
+        else:
+            print(f"  ⚠ Binus API: upload returned failure for {name}")
+            return False
+    except Exception as e:
+        print(f"  ⚠ Binus API error: {e}")
+        return False
+
+
+# ─── Persistent dedup (survives restarts) ────────────────────────────────────
+
+def load_logged_today(date_str: str) -> dict:
+    """Load today's attendance from local JSON to restore dedup state.
+    Returns dict of {employeeNo: timestamp_epoch}."""
+    filepath = DATA_DIR / f"{date_str}.json"
+    result = {}
+    if not filepath.exists():
+        return result
+    try:
+        records = json.loads(filepath.read_text())
+        now_ts = datetime.now(WIB).timestamp()
+        for name, rec in records.items():
+            emp_no = rec.get("employeeNo", "")
+            ts_str = rec.get("timestamp", "")
+            if not emp_no:
+                continue
+            try:
+                rec_ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=WIB
+                ).timestamp()
+            except Exception:
+                rec_ts = now_ts
+            if now_ts - rec_ts < DUPLICATE_WINDOW:
+                result[emp_no] = rec_ts
+        if result:
+            print(f"  🔄 Restored {len(result)} attendance records from {date_str}.json")
+    except Exception as e:
+        print(f"  ⚠ Could not restore today's attendance: {e}")
+    return result
 
 
 # ─── Name lookup from device ─────────────────────────────────────────────────
@@ -344,12 +446,17 @@ def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
                 today = current_date
                 logged_today.clear()
                 print(f"\n📅 New day: {today}")
+                logged_today.update(load_logged_today(today))
 
-            # Skip if already logged today
+            # Skip if already logged within window
             if emp_no in logged_today:
-                continue
+                elapsed = now.timestamp() - logged_today[emp_no]
+                if elapsed < DUPLICATE_WINDOW:
+                    hrs = (DUPLICATE_WINDOW - elapsed) / 3600
+                    print(f"  ℹ️  {name} — Already Logged ✓ (next allowed in {hrs:.1f}h)")
+                    continue
 
-            logged_today.add(emp_no)
+            logged_today[emp_no] = now.timestamp()
             timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
             status = determine_status(now)
 
@@ -367,6 +474,7 @@ def run_listener(use_firebase=True):
     print(f"  Late after: {CUTOFF_HOUR:02d}:{CUTOFF_MINUTE:02d}")
     print(f"  Data dir:  {DATA_DIR}")
     print(f"  Firebase:  {'enabled' if use_firebase else 'disabled'}")
+    print(f"  Binus API: {'enabled' if API_INTEGRATE_ENABLED else 'disabled'}")
     print()
 
     # Build name lookup
@@ -377,12 +485,30 @@ def run_listener(use_firebase=True):
         print(f"   • {name} (ID: {eno})")
     print()
 
+    # Load student metadata mapping (employeeNo → BINUS IDs)
+    student_meta = {}
+    if METADATA_ENABLED:
+        print("📝 Loading student metadata mapping...")
+        student_meta = student_metadata.load_from_firebase()
+        if student_meta:
+            mapped = sum(1 for v in student_meta.values() if v.get("idStudent"))
+            print(f"   {len(student_meta)} student(s) in metadata, {mapped} with BINUS IDs")
+            unmapped = [v.get('name', '?') for v in student_meta.values() if not v.get('idStudent')]
+            if unmapped:
+                print(f"   ⚠ Missing BINUS IDs: {', '.join(unmapped[:5])}{'...' if len(unmapped) > 5 else ''}")
+        else:
+            print("   ⚠ No student metadata found. BINUS API uploads will be skipped.")
+            print("     → Run enrollment (hikvision_attendance.py enroll-live/enroll-class) to populate.")
+    else:
+        print("⚠ Student metadata module not available — BINUS API uploads disabled.")
+    print()
+
     if use_firebase:
         get_firestore()
     print()
 
     today = datetime.now(WIB).strftime("%Y-%m-%d")
-    logged_today = set()
+    logged_today = load_logged_today(today)
     count = 0
     retry_delay = 5
 
@@ -429,12 +555,14 @@ def run_listener(use_firebase=True):
             ):
                 today = date_str
                 count += 1
-                icon = "⏰" if status == "Late" else "✅"
+                is_late = status == "Late"
+                icon = "⏰" if is_late else "✅"
                 print(f"{icon} [{timestamp}] {name} — {status}")
 
                 save_local(name, emp_no, timestamp, status, date_str)
                 if use_firebase:
                     save_firebase(name, emp_no, timestamp, status, date_str)
+                upload_to_binus_api(name, emp_no, "", timestamp, status, is_late)
 
         except requests.exceptions.ConnectionError:
             print(f"\n⚠ Connection lost — reconnecting in {retry_delay}s...")
