@@ -47,6 +47,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Student metadata mapping (employeeNo → BINUS IDs)
+import student_metadata
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 HIKVISION_IP   = os.getenv("HIKVISION_IP", "10.26.30.200")
@@ -55,6 +58,10 @@ HIKVISION_PASS = os.getenv("HIKVISION_PASS", "password.123")
 HIKVISION_BASE = f"http://{HIKVISION_IP}"
 HIKVISION_AUTH = HTTPDigestAuth(HIKVISION_USER, HIKVISION_PASS)
 POLL_INTERVAL  = int(os.getenv("POLL_INTERVAL", "3"))
+
+# Persistent session for digest auth (avoids stale nonce issues)
+_hik_session = requests.Session()
+_hik_session.auth = HIKVISION_AUTH
 
 FIREBASE_CREDENTIALS = os.getenv(
     "FIREBASE_CREDENTIALS",
@@ -108,11 +115,25 @@ def _get_shape_predictor():
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _api(method, path, **kwargs):
-    """Call the Hikvision ISAPI and return the response."""
+    """Call the Hikvision ISAPI and return the response.
+    
+    Automatically retries once on 401 (stale digest nonce) by rebuilding
+    the session auth.
+    """
     url = f"{HIKVISION_BASE}{path}"
-    kwargs.setdefault("auth", HIKVISION_AUTH)
     kwargs.setdefault("timeout", 15)
-    return getattr(requests, method)(url, **kwargs)
+    kwargs.pop("auth", None)
+    
+    r = getattr(_hik_session, method)(url, **kwargs)
+    
+    # Retry on 401 — rebuild auth (device may have invalidated nonce)
+    if r.status_code == 401:
+        import time as _time
+        _time.sleep(1)
+        _hik_session.auth = HTTPDigestAuth(HIKVISION_USER, HIKVISION_PASS)
+        r = getattr(_hik_session, method)(url, **kwargs)
+    
+    return r
 
 
 def _api_json(method, path, **kwargs):
@@ -712,6 +733,28 @@ def enroll_live():
                 if ok:
                     enrolled += 1
                     existing[employee_no] = {"employeeNo": employee_no, "numOfFace": 1}
+                    # Save metadata mapping for attendance pipeline
+                    # Try to get idBinusian from class list lookup
+                    id_binusian = ""
+                    try:
+                        photos = binus_get_class_students(
+                            grade_code or "1", homeroom, token=token
+                        )
+                        for p in (photos or []):
+                            if str(p.get("idStudent", "")) == sid:
+                                id_binusian = str(p.get("idBinusian", ""))
+                                break
+                    except Exception:
+                        pass
+                    student_metadata.save_student(
+                        employee_no=employee_no,
+                        name=name,
+                        id_student=sid,
+                        id_binusian=id_binusian,
+                        homeroom=homeroom,
+                        grade=grade_code or "",
+                    )
+                    print(f"   📝 Metadata saved (ID:{sid}, BN:{id_binusian or 'pending'})")
                 else:
                     failed += 1
 
@@ -787,6 +830,17 @@ def enroll_class(grade: str, homeroom: str):
                 if ok:
                     enrolled += 1
                     existing[employee_no] = {"employeeNo": employee_no, "numOfFace": 1}
+                    # Save metadata mapping for attendance pipeline
+                    id_binusian = str(s.get("idBinusian", ""))
+                    student_metadata.save_student(
+                        employee_no=employee_no,
+                        name=name,
+                        id_student=sid,
+                        id_binusian=id_binusian,
+                        homeroom=hr,
+                        grade=grade,
+                    )
+                    print(f"   📝 Metadata saved (ID:{sid}, BN:{id_binusian or 'n/a'})")
                 else:
                     failed += 1
 
@@ -859,26 +913,100 @@ def enroll_from_firebase():
     """Download face images from Firebase Storage, crop faces, and enroll
     them on the Hikvision device via the FDLib API.
 
+    Uses real BINUS Student IDs (from Firebase `students` collection) as the
+    device employeeNo, so that attendance events directly carry the IdStudent
+    needed for the BINUS e-Desk API.
+
     Pipeline:
-        1. Download images from Firebase Storage
-        2. Detect and crop faces using dlib
-        3. Start temporary HTTP server to serve cropped faces
-        4. Call device FDLib/FDSetUp with faceURL → device downloads & processes
-        5. Shut down HTTP server
+        1. Load student metadata from Firebase Firestore (`students` collection)
+        2. Batch-fetch IdBinusian from BINUS C.1 API per class
+        3. Download face images from Firebase Storage
+        4. Detect and crop faces using dlib
+        5. Start temporary HTTP server to serve cropped faces
+        6. Create user on device with IdStudent as employeeNo
+        7. Upload face via FDLib → device downloads & extracts embeddings
+        8. Save full metadata (IdStudent, IdBinusian, name, class) for attendance
     """
     try:
-        from firebase_dataset_sync import sync_face_dataset_from_firebase
+        from firebase_dataset_sync import sync_face_dataset_from_firebase, initialize_firebase_app
+        from firebase_admin import firestore as fb_firestore
     except ImportError:
         print("❌ firebase_admin is required. Install it (pip install firebase-admin).")
         return
 
+    # ── Step 1: Load student metadata from Firebase Firestore ──
+    print("📋 Loading student metadata from Firebase Firestore...")
+    try:
+        app = initialize_firebase_app(FIREBASE_CREDENTIALS, FIREBASE_BUCKET)
+        db = fb_firestore.client(app=app)
+        docs = db.collection("students").stream()
+        fb_students = {}  # name → {id, homeroom, gradeCode, ...}
+        for doc in docs:
+            d = doc.to_dict()
+            sid = d.get("id", "")
+            name = d.get("name", "")
+            # Skip test/manual entries
+            if not sid or not name or sid.startswith("TEST") or sid.startswith("MANUAL"):
+                continue
+            fb_students[name.strip()] = {
+                "idStudent": str(sid),
+                "homeroom": d.get("homeroom", ""),
+                "gradeCode": d.get("gradeCode", ""),
+                "gradeName": d.get("gradeName", ""),
+            }
+        print(f"   {len(fb_students)} student(s) with BINUS IDs in Firestore")
+        for name, info in fb_students.items():
+            print(f"   • {name}: ID={info['idStudent']}, Class={info['homeroom']}")
+    except Exception as e:
+        print(f"⚠️  Could not load student metadata from Firestore: {e}")
+        fb_students = {}
+
+    # ── Step 2: Batch-fetch IdBinusian from BINUS C.1 API per class ──
+    print("\n🔑 Fetching IdBinusian from BINUS API...")
+    id_binusian_map = {}  # idStudent → idBinusian
+    _binus_token = None
+    try:
+        _binus_token = _binus_get_token()
+    except Exception:
+        pass
+
+    if _binus_token and fb_students:
+        # Group students by (gradeCode, homeroom) for batch lookup
+        class_groups = {}
+        for name, info in fb_students.items():
+            grade = info.get("gradeCode", "")
+            hr = info.get("homeroom", "")
+            if grade and hr:
+                key = (grade, hr)
+                if key not in class_groups:
+                    class_groups[key] = []
+                class_groups[key].append((name, info["idStudent"]))
+
+        for (grade, hr), members in class_groups.items():
+            print(f"   📚 Grade {grade}, Homeroom {hr} ({len(members)} student(s))...")
+            try:
+                class_students = binus_get_class_students(grade, hr, token=_binus_token)
+                for cs in (class_students or []):
+                    cs_id = str(cs.get("idStudent", ""))
+                    cs_bn = str(cs.get("idBinusian", ""))
+                    if cs_id and cs_bn:
+                        id_binusian_map[cs_id] = cs_bn
+                found = sum(1 for _, sid in members if sid in id_binusian_map)
+                print(f"      ✓ {found}/{len(members)} IdBinusian found")
+            except Exception as e:
+                print(f"      ⚠️  Lookup failed: {e}")
+    else:
+        print("   ⚠️  BINUS API unavailable — IdBinusian will be empty")
+
+    print(f"   Total IdBinusian mapped: {len(id_binusian_map)}\n")
+
+    # ── Step 3: Download face images from Firebase Storage ──
     with tempfile.TemporaryDirectory(prefix="hik_enroll_") as tmp:
         dataset_root = Path(tmp) / "face_dataset"
         serve_dir = Path(tmp) / "serve"
         dataset_root.mkdir(parents=True, exist_ok=True)
         serve_dir.mkdir(parents=True, exist_ok=True)
 
-        # Step 1: Download from Firebase
         print("📥 Downloading face images from Firebase Storage...")
         stats = sync_face_dataset_from_firebase(
             destination_root=dataset_root,
@@ -888,13 +1016,12 @@ def enroll_from_firebase():
         )
         print(f"   {stats}")
 
-        # Step 2: Start HTTP server for face image serving
+        # ── Step 4: Start HTTP server ──
         print(f"\n🌐 Starting face image server on port {FACE_SERVER_PORT}...")
         server, thread, base_url = _start_face_server(str(serve_dir), FACE_SERVER_PORT)
         print(f"   Serving from: {base_url}")
 
         try:
-            # Get existing device users
             existing = {u["employeeNo"]: u for u in get_enrolled_users()}
             print(f"📋 Currently {len(existing)} user(s) on device.\n")
 
@@ -905,9 +1032,34 @@ def enroll_from_firebase():
                 if not student_dir.is_dir():
                     continue
                 student_name = student_dir.name
-                employee_no = _employee_no_from_name(student_name)
+                homeroom = ""
 
-                # Gather images and rank by frontality (best frontal first)
+                # ── Resolve BINUS Student ID ──
+                # Priority: Firebase Firestore metadata > filename extraction > skip
+                fb_info = fb_students.get(student_name)
+                if fb_info:
+                    student_id = fb_info["idStudent"]
+                    homeroom = fb_info.get("homeroom", "")
+                else:
+                    # Try to extract from image filename (e.g. 2070003324_front_...)
+                    student_id = ""
+                    for img_p in student_dir.iterdir():
+                        sid = _extract_student_id(img_p.name)
+                        if sid:
+                            student_id = sid
+                            break
+
+                if not student_id:
+                    print(f"⚠️  {student_name}: No BINUS Student ID found — skipping.")
+                    print(f"     → Capture photos via the web app first (enter student ID)")
+                    failed += 1
+                    continue
+
+                # Use the real BINUS Student ID as device employeeNo
+                employee_no = str(student_id)
+                id_binusian = id_binusian_map.get(student_id, "")
+
+                # Gather and rank images
                 raw_images = list(student_dir.glob("*.jp*")) + list(student_dir.glob("*.png"))
                 if not raw_images:
                     print(f"⚠️  {student_name}: no images found, skipping.")
@@ -917,22 +1069,23 @@ def enroll_from_firebase():
                 images = [p for p, _ in ranked]
                 best_score = ranked[0][1] if ranked else 0
 
-                # Extract student ID from filename if available
-                student_id = ""
-                for img_p in images:
-                    sid = _extract_student_id(img_p.name)
-                    if sid:
-                        student_id = sid
-                        break
+                print(f"👤 {student_name}")
+                print(f"   IdStudent: {student_id} │ IdBinusian: {id_binusian or 'n/a'} │ Class: {homeroom or 'n/a'}")
+                print(f"   Images: {len(images)} │ Best frontality: {best_score:.2f}")
 
-                print(f"👤 {student_name} (ID: {employee_no}, StudentNo: {student_id or 'n/a'}, "
-                      f"best frontality: {best_score:.2f})")
-
-                # Step 3: Create user on device (if not exists)
+                # ── Step 5: Create user on device ──
                 if employee_no in existing:
                     current_faces = existing[employee_no].get("numOfFace", 0)
                     if current_faces > 0:
                         print(f"   ℹ️  Already enrolled with {current_faces} face(s), skipping.")
+                        # Still save/update metadata
+                        student_metadata.save_student(
+                            employee_no=employee_no,
+                            name=student_name,
+                            id_student=student_id,
+                            id_binusian=id_binusian,
+                            homeroom=homeroom,
+                        )
                         enrolled += 1
                         continue
                     print(f"   ℹ️  User exists, uploading face...")
@@ -942,16 +1095,15 @@ def enroll_from_firebase():
                         print(f"   ❌ Failed to create user: {resp}")
                         failed += 1
                         continue
-                    print(f"   ✅ User created.")
+                    print(f"   ✅ User created on device (employeeNo={employee_no})")
 
-                # Step 4: Crop face and serve via HTTP
+                # ── Step 6: Crop face, serve via HTTP, upload to FDLib ──
                 face_ok = False
                 for img_path in images:
                     filename = f"{employee_no}_face.jpg"
                     out_path = serve_dir / filename
                     face_found = crop_face(str(img_path), str(out_path))
 
-                    # Get this image's frontality score for display
                     img_score = next((s for p, s in ranked if p == img_path), 0)
                     if face_found:
                         print(f"   📷 Face in {img_path.name} (frontality: {img_score:.2f}), uploading...")
@@ -959,8 +1111,6 @@ def enroll_from_firebase():
                         print(f"   ⚠️  No face in {img_path.name}, using fallback resize...")
 
                     face_url = f"{base_url}/{filename}"
-
-                    # Step 5: Upload to device via FDLib
                     ok, resp = upload_face_fdlib(employee_no, student_name, face_url)
                     if ok:
                         print(f"   ✅ Face enrolled on device!")
@@ -972,12 +1122,21 @@ def enroll_from_firebase():
 
                 if face_ok:
                     enrolled += 1
+                    # ── Step 7: Save metadata for attendance pipeline ──
+                    student_metadata.save_student(
+                        employee_no=employee_no,
+                        name=student_name,
+                        id_student=student_id,
+                        id_binusian=id_binusian,
+                        homeroom=homeroom,
+                        grade=fb_info.get("gradeCode", "") if fb_info else "",
+                    )
+                    print(f"   📝 Metadata: IdStudent={student_id}, IdBinusian={id_binusian or 'pending'}")
                 else:
                     print(f"   ❌ None of {len(images)} images accepted by device.")
                     failed += 1
 
         finally:
-            # Step 6: Shut down HTTP server
             _stop_face_server(server)
             print(f"\n🌐 Face server stopped.")
 
