@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Clock, Fingerprint, CheckCircle2, Users, MapPin, MapPinOff, AlertTriangle } from 'lucide-react';
+import { Clock, Fingerprint, CheckCircle2, MapPin, MapPinOff, AlertTriangle } from 'lucide-react';
 import { loadModels, loadDescriptors, isModelsLoaded, getLoadedCount } from '../lib/faceRecognition';
-import { getTodaySummary } from '../lib/api';
 import { watchProximity, getCampusConfig } from '../lib/geolocation';
 import LiveMap from '../components/LiveMap';
 import styles from '../styles/Home.module.css';
@@ -12,7 +11,6 @@ export default function HomePage() {
   const [time, setTime] = useState(new Date());
   const [status, setStatus] = useState('idle'); // idle | loading | ready | error
   const [statusMsg, setStatusMsg] = useState('');
-  const [summary, setSummary] = useState(null);
 
   // Proximity state
   const [location, setLocation] = useState(null);   // { inRange, distance, accuracy }
@@ -56,9 +54,6 @@ export default function HomePage() {
 
     init();
 
-    // Also fetch today's summary
-    getTodaySummary().then((s) => !cancelled && setSummary(s));
-
     return () => { cancelled = true; };
   }, []);
 
@@ -92,12 +87,6 @@ export default function HomePage() {
           <img src="/logo.jpe" alt="BINUS" className={styles.logo} />
           <span className={styles.brand}>BINUS Attendance</span>
         </div>
-        {summary && (
-          <span className={styles.todayBadge}>
-            <Users size={14} />
-            {summary.total} today
-          </span>
-        )}
       </div>
 
       {/* Clock */}
@@ -184,20 +173,7 @@ export default function HomePage() {
         );
       })()}
 
-      {/* Today summary */}
-      {summary && summary.total > 0 && (
-        <div className={styles.summaryBar}>
-          <div className={styles.summaryItem}>
-            <span className={styles.summaryNum}>{summary.present}</span>
-            <span className={styles.summaryLabel}>Present</span>
-          </div>
-          <div className={styles.summaryDivider} />
-          <div className={styles.summaryItem}>
-            <span className={`${styles.summaryNum} ${styles.summaryLate}`}>{summary.late}</span>
-            <span className={styles.summaryLabel}>Late</span>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }
