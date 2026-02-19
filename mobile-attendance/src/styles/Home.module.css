@@ -1,0 +1,215 @@
+.container {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: #0f172a;
+  color: #f1f5f9;
+}
+
+/* ─── Top Bar ────────────────────────────────────────── */
+.topBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem 0.5rem;
+}
+
+.brandGroup {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.brand {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #38bdf8;
+  letter-spacing: 0.02em;
+}
+
+.todayBadge {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  background: #1e293b;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+}
+
+/* ─── Clock Section ──────────────────────────────────── */
+.clockSection {
+  text-align: center;
+  padding: 2.5rem 1rem 1rem;
+}
+
+.date {
+  color: #94a3b8;
+  font-size: 0.9rem;
+  margin: 0 0 0.75rem;
+}
+
+.clock {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.15rem;
+}
+
+.clockDigit {
+  font-size: 4rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #f1f5f9;
+  letter-spacing: -0.02em;
+}
+
+.clockSep {
+  font-size: 3.5rem;
+  font-weight: 300;
+  color: #475569;
+  animation: blink 1s step-end infinite;
+}
+
+.clockDigitSec {
+  font-size: 2rem;
+  font-weight: 600;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5rem;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.timezone {
+  color: #475569;
+  font-size: 0.75rem;
+  margin: 0.5rem 0 0;
+}
+
+/* ─── Clock In Button ────────────────────────────────── */
+.actionSection {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  gap: 1rem;
+}
+
+.clockInBtn {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  border: 3px solid #334155;
+  background: #1e293b;
+  color: #475569;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  cursor: not-allowed;
+  transition: all 0.4s ease;
+  box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+}
+
+.clockInBtn.clockInReady {
+  border-color: #38bdf8;
+  color: #38bdf8;
+  cursor: pointer;
+  box-shadow: 0 0 40px rgba(56, 189, 248, 0.15);
+}
+
+.clockInBtn.clockInReady:hover {
+  background: #1e3a5f;
+  box-shadow: 0 0 60px rgba(56, 189, 248, 0.3);
+  transform: scale(1.04);
+}
+
+.clockInBtn.clockInReady:active {
+  transform: scale(0.97);
+}
+
+.clockInIcon {
+  line-height: 0;
+}
+
+.clockInLabel {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.statusLine {
+  font-size: 0.8rem;
+  min-height: 1.2em;
+  margin: 0;
+}
+
+.statusLoading {
+  color: #94a3b8;
+}
+
+.statusReady {
+  color: #22c55e;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.statusError {
+  color: #f87171;
+}
+
+/* ─── Summary Bar ────────────────────────────────────── */
+.summaryBar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  padding: 1.25rem;
+  border-top: 1px solid #1e293b;
+}
+
+.summaryItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.summaryNum {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #22c55e;
+}
+
+.summaryLate {
+  color: #f97316;
+}
+
+.summaryLabel {
+  font-size: 0.7rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.summaryDivider {
+  width: 1px;
+  height: 2.5rem;
+  background: #334155;
+}
