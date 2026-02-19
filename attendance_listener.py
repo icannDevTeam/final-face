@@ -352,10 +352,14 @@ def save_local(name: str, emp_no: str, timestamp: str, status: str, date_str: st
 
 
 def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str: str):
-    """Write attendance record to Firestore, enriched with class/grade metadata."""
+    """Write attendance record to Firestore, enriched with class/grade metadata.
+    
+    DEDUP: If a record already exists for this student today (e.g. from the
+    mobile app), skip overwriting and return 'already_exists'.
+    """
     db = get_firestore()
     if not db:
-        return
+        return None
 
     # Look up class/grade from student metadata
     homeroom = ""
@@ -368,6 +372,15 @@ def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str:
 
     try:
         doc_ref = db.collection("attendance").document(date_str).collection("records").document(emp_no)
+
+        # ── Dedup: check if record already exists from ANY source ──────
+        existing = doc_ref.get()
+        if existing.exists:
+            existing_data = existing.to_dict()
+            existing_source = existing_data.get("source", "unknown")
+            print(f"  ℹ️  {name} already clocked in via {existing_source} — skipping overwrite")
+            return "already_exists"
+
         doc_ref.set({
             "name": name,
             "employeeNo": emp_no,
@@ -376,13 +389,16 @@ def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str:
             "late": status == "Late",
             "homeroom": homeroom,
             "grade": grade,
+            "source": "hikvision_terminal",
             "updatedAt": datetime.now(WIB).isoformat(),
         })
         # Also update the day summary
         day_ref = db.collection("attendance").document(date_str)
         day_ref.set({"lastUpdated": datetime.now(WIB).isoformat()}, merge=True)
+        return "created"
     except Exception as e:
         print(f"  ⚠ Firestore write failed: {e}")
+        return None
 
 
 # ─── Event stream parser ─────────────────────────────────────────────────────
@@ -572,9 +588,12 @@ def run_listener(use_firebase=True):
                 print(f"{icon} [{timestamp}] {name} — {status}")
 
                 save_local(name, emp_no, timestamp, status, date_str)
+                fb_result = None
                 if use_firebase:
-                    save_firebase(name, emp_no, timestamp, status, date_str)
-                upload_to_binus_api(name, emp_no, "", timestamp, status, is_late)
+                    fb_result = save_firebase(name, emp_no, timestamp, status, date_str)
+                # Only push to BINUS API if this is a NEW record (not already captured by mobile)
+                if fb_result != "already_exists":
+                    upload_to_binus_api(name, emp_no, "", timestamp, status, is_late)
 
         except requests.exceptions.ConnectionError:
             print(f"\n⚠ Connection lost — reconnecting in {retry_delay}s...")

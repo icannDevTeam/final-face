@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column;
   background: #000;
-  color: #f1f5f9;
+  color: #ffffff;
 }
 
 /* ─── Header ─────────────────────────────────────────── */
@@ -12,33 +12,38 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  background: rgba(15, 23, 42, 0.9);
-  backdrop-filter: blur(10px);
+  background: var(--binus-blue);
   z-index: 10;
 }
 
 .backBtn {
-  background: none;
+  background: rgba(255, 255, 255, 0.12);
   border: none;
-  color: #94a3b8;
+  color: #ffffff;
   padding: 0.5rem;
   cursor: pointer;
-  border-radius: 0.5rem;
+  border-radius: 0.6rem;
+  transition: background 0.2s;
 }
 
-.backBtn:hover { background: #1e293b; }
+.backBtn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
 
 .headerLogo {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 6px;
   object-fit: contain;
+  background: #ffffff;
+  padding: 2px;
 }
 
 .title {
   font-size: 1rem;
   font-weight: 600;
   margin: 0;
+  color: #ffffff;
 }
 
 /* ─── Camera Viewport ────────────────────────────────── */
@@ -82,20 +87,20 @@
 .scanFrame {
   width: 220px;
   height: 280px;
-  border: 2px dashed #475569;
+  border: 2px dashed rgba(255, 255, 255, 0.3);
   border-radius: 50%;
   transition: border-color 0.3s, box-shadow 0.3s;
 }
 
 .scanFrameActive {
-  border-color: #22c55e;
-  box-shadow: 0 0 30px rgba(34, 197, 94, 0.2);
+  border-color: var(--binus-accent);
+  box-shadow: 0 0 30px rgba(0, 163, 224, 0.25);
   animation: pulseFrame 1.5s ease-in-out infinite;
 }
 
 @keyframes pulseFrame {
-  0%, 100% { box-shadow: 0 0 20px rgba(34, 197, 94, 0.15); }
-  50%      { box-shadow: 0 0 40px rgba(34, 197, 94, 0.35); }
+  0%, 100% { box-shadow: 0 0 20px rgba(0, 163, 224, 0.15); }
+  50%      { box-shadow: 0 0 40px rgba(0, 163, 224, 0.4); }
 }
 
 /* ─── Match Overlay ──────────────────────────────────── */
@@ -110,13 +115,13 @@
   z-index: 5;
 }
 
-.matchOverlay { background: rgba(0, 0, 0, 0.6); }
-.doneOverlay  { background: rgba(0, 0, 0, 0.75); }
+.matchOverlay { background: rgba(0, 0, 0, 0.55); }
+.doneOverlay  { background: rgba(0, 0, 0, 0.7); }
 .errorOverlay {
   background: rgba(0, 0, 0, 0.8);
   flex-direction: column;
   gap: 1rem;
-  color: #f87171;
+  color: #ef4444;
   text-align: center;
   padding: 2rem;
 }
@@ -124,35 +129,36 @@
 .matchCard,
 .doneCard {
   text-align: center;
-  background: rgba(30, 41, 59, 0.95);
-  border: 1px solid #334155;
-  border-radius: 1.25rem;
+  background: #ffffff;
+  border: none;
+  border-radius: 1.5rem;
   padding: 2rem 2.5rem;
-  backdrop-filter: blur(10px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
   animation: slideUp 0.35s ease-out;
+  color: var(--text-primary);
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(20px); }
+  from { opacity: 0; transform: translateY(24px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.matchIcon { color: #38bdf8; }
+.matchIcon { color: var(--binus-accent); }
 
 .matchCard h3 {
   font-size: 1.3rem;
   margin: 0.75rem 0 0.25rem;
-  color: #f1f5f9;
+  color: var(--text-primary);
 }
 
 .matchCard p {
-  color: #94a3b8;
+  color: var(--text-secondary);
   margin: 0.15rem 0;
   font-size: 0.9rem;
 }
 
 .matchConf {
-  color: #22c55e !important;
+  color: var(--binus-blue) !important;
   font-weight: 600;
   font-size: 0.85rem !important;
   margin-top: 0.5rem !important;
@@ -163,16 +169,16 @@
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  color: #94a3b8;
+  color: var(--text-secondary);
   font-size: 0.85rem;
   margin-top: 0.75rem;
 }
 
 /* ─── Done Card ──────────────────────────────────────── */
-.doneIcon { color: #22c55e; }
+.doneIcon { color: #16a34a; }
 
 .doneCard h3 {
-  color: #22c55e;
+  color: #16a34a;
   font-size: 1.2rem;
   margin: 0.75rem 0 0.5rem;
 }
@@ -180,23 +186,23 @@
 .doneName {
   font-size: 1.1rem;
   font-weight: 600;
-  color: #f1f5f9;
+  color: var(--text-primary);
   margin: 0.25rem 0;
 }
 
 .doneStatus {
   display: inline-block;
-  padding: 0.2rem 0.75rem;
+  padding: 0.25rem 0.85rem;
   border-radius: 999px;
   font-size: 0.8rem;
   font-weight: 600;
   margin: 0.5rem 0;
-  background: #14532d;
-  color: #4ade80;
+  background: #dcfce7;
+  color: #16a34a;
 }
 
 .doneTime {
-  color: #64748b;
+  color: var(--text-secondary);
   font-size: 0.8rem;
   margin: 0.25rem 0 0;
 }
@@ -204,21 +210,22 @@
 /* ─── Error ──────────────────────────────────────────── */
 .retryBtn {
   padding: 0.65rem 1.5rem;
-  border: 1px solid #475569;
-  background: #1e293b;
-  color: #f1f5f9;
+  border: none;
+  background: var(--binus-blue);
+  color: #ffffff;
   border-radius: 0.75rem;
   font-size: 0.9rem;
+  font-weight: 600;
   cursor: pointer;
+  transition: background 0.2s;
 }
 
-.retryBtn:hover { background: #334155; }
+.retryBtn:hover { background: var(--binus-dark); }
 
 /* ─── Bottom Status Bar ──────────────────────────────── */
 .statusBar {
   padding: 1rem 1.25rem;
-  background: rgba(15, 23, 42, 0.9);
-  backdrop-filter: blur(10px);
+  background: var(--binus-blue);
   z-index: 10;
 }
 
@@ -227,15 +234,17 @@
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  color: #94a3b8;
+  color: rgba(255, 255, 255, 0.85);
   font-size: 0.85rem;
   margin: 0;
+  font-weight: 500;
 }
 
 .statusTextDone {
   text-align: center;
-  color: #22c55e;
+  color: #bbf7d0;
   font-size: 0.85rem;
+  font-weight: 600;
   margin: 0;
 }
 
