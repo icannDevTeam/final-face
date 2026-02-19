@@ -6,7 +6,8 @@ import {
   isModelsLoaded,
   getLoadedCount,
 } from '../lib/faceRecognition';
-import { checkIn, getExistingCheckIn } from '../lib/api';
+import { checkIn } from '../lib/api';
+import { checkProximity } from '../lib/geolocation';
 import {
   ArrowLeft,
   Camera,
@@ -91,7 +92,7 @@ export default function ScanPage() {
       setFaceDetected(true);
       const { x, y, width, height } = det.box;
 
-      ctx.strokeStyle = '#22c55e';
+      ctx.strokeStyle = '#00A3E0';
       ctx.lineWidth = 3;
       ctx.setLineDash([8, 4]);
       ctx.strokeRect(x, y, width, height);
@@ -100,7 +101,7 @@ export default function ScanPage() {
       const corner = 16;
       ctx.setLineDash([]);
       ctx.lineWidth = 4;
-      ctx.strokeStyle = '#38bdf8';
+      ctx.strokeStyle = '#0054A6';
       // Top-left
       ctx.beginPath(); ctx.moveTo(x, y + corner); ctx.lineTo(x, y); ctx.lineTo(x + corner, y); ctx.stroke();
       // Top-right
@@ -158,34 +159,41 @@ export default function ScanPage() {
 
   const performClockIn = useCallback(async (result) => {
     setPhase('clocking');
-    setStatusMsg('Recording attendance…');
+    setStatusMsg('Verifying location…');
 
     try {
-      // Check if already clocked in
-      const existing = await getExistingCheckIn(result.student.id);
-      if (existing) {
-        setClockResult({
-          ...existing,
-          alreadyDone: true,
-        });
-        setPhase('done');
-        setStatusMsg('Already clocked in today');
+      // Re-verify proximity at clock-in time (prevent spoofing from home page)
+      let loc;
+      try {
+        loc = await checkProximity();
+        if (!loc.inRange) {
+          setPhase('error');
+          setStatusMsg(`You are ${loc.distance}m from campus (max ${loc.campusRadius}m). Move closer to clock in.`);
+          return;
+        }
+      } catch (locErr) {
+        setPhase('error');
+        setStatusMsg(locErr.message);
         return;
       }
 
-      const record = await checkIn(
+      setStatusMsg('Recording attendance…');
+
+      // checkIn() now handles dedup internally — it returns alreadyDone
+      // if a record already exists from any source (mobile or hikvision)
+      const result2 = await checkIn(
         result.student.id,
         result.student.name,
-        { lat: 0, lng: 0, accuracy: 0, distance: 0 },
+        { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy, distance: loc.distance },
         {
           homeroom: result.student.homeroom,
           grade: result.student.grade,
         }
       );
 
-      setClockResult(record.record);
+      setClockResult(result2.record);
       setPhase('done');
-      setStatusMsg('Attendance recorded!');
+      setStatusMsg(result2.alreadyDone ? 'Already clocked in today' : 'Attendance recorded!');
     } catch (err) {
       setPhase('error');
       setStatusMsg(err.message);

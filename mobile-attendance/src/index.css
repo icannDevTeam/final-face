@@ -8,13 +8,31 @@
 }
 
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+  /* BINUS Brand Palette */
+  --binus-blue: #0054A6;
+  --binus-dark: #003A75;
+  --binus-light: #E8F1FB;
+  --binus-accent: #00A3E0;
+  --binus-gradient: linear-gradient(135deg, #0054A6 0%, #00A3E0 100%);
+
+  /* Neutrals */
+  --bg-primary: #F4F6FA;
+  --bg-card: #FFFFFF;
+  --text-primary: #1A2B4A;
+  --text-secondary: #6B7A94;
+  --text-muted: #A0AEBF;
+  --border: #E2E8F0;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 84, 166, 0.08);
+  --shadow-lg: 0 8px 30px rgba(0, 84, 166, 0.12);
+
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color-scheme: dark;
-  color: #f1f5f9;
-  background-color: #0f172a;
+  color-scheme: light;
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -31,7 +49,7 @@ body {
   margin: 0;
   min-height: 100dvh;
   min-width: 320px;
-  background: #0f172a;
+  background: var(--bg-primary);
 }
 
 #root {
@@ -39,7 +57,7 @@ body {
 }
 
 a {
-  color: #38bdf8;
+  color: var(--binus-blue);
   text-decoration: none;
 }
 

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Clock, Fingerprint, CheckCircle2, Users } from 'lucide-react';
+import { Clock, Fingerprint, CheckCircle2, Users, MapPin, MapPinOff, AlertTriangle } from 'lucide-react';
 import { loadModels, loadDescriptors, isModelsLoaded, getLoadedCount } from '../lib/faceRecognition';
 import { getTodaySummary } from '../lib/api';
+import { watchProximity, getCampusConfig } from '../lib/geolocation';
 import styles from '../styles/Home.module.css';
 
 export default function HomePage() {
@@ -12,10 +13,23 @@ export default function HomePage() {
   const [statusMsg, setStatusMsg] = useState('');
   const [summary, setSummary] = useState(null);
 
+  // Proximity state
+  const [location, setLocation] = useState(null);   // { inRange, distance, accuracy }
+  const [locError, setLocError] = useState(null);    // error message string
+
   // Live clock
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // Watch proximity continuously
+  useEffect(() => {
+    const stopWatch = watchProximity(
+      (loc) => { setLocation(loc); setLocError(null); },
+      (err) => { setLocError(err); setLocation(null); },
+    );
+    return stopWatch;
   }, []);
 
   // Load models + descriptors on mount
@@ -60,7 +74,14 @@ export default function HomePage() {
     day: 'numeric',
   });
 
-  const canClockIn = status === 'ready';
+  const modelsReady = status === 'ready';
+  const inRange = location?.inRange === true;
+  const canClockIn = modelsReady && inRange;
+
+  // Button label logic
+  let btnLabel = 'Clock In';
+  if (status === 'loading') btnLabel = 'Preparing…';
+  else if (!inRange && modelsReady) btnLabel = 'Out of Range';
 
   return (
     <div className={styles.container}>
@@ -101,9 +122,7 @@ export default function HomePage() {
           <div className={styles.clockInIcon}>
             <Fingerprint size={48} />
           </div>
-          <span className={styles.clockInLabel}>
-            {status === 'loading' ? 'Preparing…' : 'Clock In'}
-          </span>
+          <span className={styles.clockInLabel}>{btnLabel}</span>
         </button>
 
         <p className={styles.statusLine}>
@@ -119,6 +138,34 @@ export default function HomePage() {
             <span className={styles.statusError}>{statusMsg}</span>
           )}
         </p>
+      </div>
+
+      {/* Proximity indicator */}
+      <div className={styles.locationBar}>
+        {locError && (
+          <div className={`${styles.locationStatus} ${styles.locationError}`}>
+            <MapPinOff size={16} />
+            <span>{locError}</span>
+          </div>
+        )}
+        {location && location.inRange && (
+          <div className={`${styles.locationStatus} ${styles.locationOk}`}>
+            <MapPin size={16} />
+            <span>On campus — {location.distance}m from school</span>
+          </div>
+        )}
+        {location && !location.inRange && (
+          <div className={`${styles.locationStatus} ${styles.locationFar}`}>
+            <AlertTriangle size={16} />
+            <span>Too far — {location.distance}m away (max {location.campusRadius}m)</span>
+          </div>
+        )}
+        {!location && !locError && (
+          <div className={`${styles.locationStatus} ${styles.locationLoading}`}>
+            <MapPin size={16} />
+            <span>Checking location…</span>
+          </div>
+        )}
       </div>
 
       {/* Today summary */}

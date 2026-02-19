@@ -66,14 +66,28 @@ export async function lookupStudent(studentId) {
 // ─── Attendance check-in ──────────────────────────────────────────────
 
 /**
- * Record a proximity-based attendance check-in.
+ * Record a face-recognition attendance check-in.
  *
  * Writes to Firebase Firestore: attendance/{date}/records/{studentId}
+ *
+ * DEDUP LOGIC: Checks if the student already has a record for today
+ * (from ANY source: mobile, hikvision, etc). If they do, returns the
+ * existing record without overwriting. This prevents double-attendance.
  */
 export async function checkIn(studentId, studentName, location, metadata = {}) {
   const date = getWIBDate();
   const timestamp = getWIBTimestamp();
   const time = getWIBTime();
+
+  // ── Dedup: check for existing record from ANY source ──────────────
+  const existing = await getExistingCheckIn(studentId);
+  if (existing) {
+    return {
+      success: true,
+      record: { ...existing, alreadyDone: true },
+      alreadyDone: true,
+    };
+  }
 
   // Determine if late (after 08:15 WIB)
   const [h, m] = time.split(':').map(Number);
@@ -105,10 +119,58 @@ export async function checkIn(studentId, studentName, location, metadata = {}) {
     const dayRef = doc(db, 'attendance', date);
     await setDoc(dayRef, { lastUpdated: new Date().toISOString() }, { merge: true });
 
+    // ── Also push to BINUS School API (best-effort, non-blocking) ───
+    syncToBinusApi(studentId).catch((err) =>
+      console.warn('BINUS API sync (non-critical):', err.message)
+    );
+
     return { success: true, record };
   } catch (err) {
     console.error('Check-in failed:', err);
     throw new Error('Failed to record attendance. Please try again.');
+  }
+}
+
+// ─── BINUS School API sync ────────────────────────────────────────────
+
+/**
+ * Look up student_metadata from Firestore and push attendance to BINUS API
+ * via the Vercel serverless proxy at /api/binus-attendance.
+ */
+async function syncToBinusApi(studentId) {
+  try {
+    // Read BINUS IDs from student_metadata collection
+    const metaRef = doc(db, 'student_metadata', String(studentId));
+    const metaSnap = await getDoc(metaRef);
+
+    if (!metaSnap.exists()) {
+      console.warn(`No student_metadata for ${studentId} — skipping BINUS API`);
+      return;
+    }
+
+    const meta = metaSnap.data();
+    const idStudent = meta.idStudent || meta.IdStudent || '';
+    const idBinusian = meta.idBinusian || meta.IdBinusian || '';
+
+    if (!idStudent) {
+      console.warn(`No IdStudent in metadata for ${studentId} — skipping BINUS API`);
+      return;
+    }
+
+    const resp = await fetch('/api/binus-attendance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ IdStudent: idStudent, IdBinusian: idBinusian }),
+    });
+
+    const result = await resp.json();
+    if (result.success) {
+      console.log(`☁️ BINUS API: attendance synced for ${studentId}`);
+    } else {
+      console.warn(`BINUS API error: ${result.error}`);
+    }
+  } catch (err) {
+    console.warn('BINUS API sync failed:', err.message);
   }
 }
 
