@@ -24,5 +24,9 @@ facial-attendance-binus-firebase-adminsdk.json
 .env
 .env.local
 
+# Docs with sensitive info (endpoints, credentials, PII)
+DOCS.md
+api_testing/
+
 # OS
 .DS_Store
