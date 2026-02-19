@@ -12,38 +12,49 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  background: var(--binus-blue);
+  background: linear-gradient(180deg, rgba(0, 84, 166, 0.95), rgba(0, 58, 117, 0.98));
   z-index: 10;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .backBtn {
-  background: rgba(255, 255, 255, 0.12);
-  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   color: #ffffff;
-  padding: 0.5rem;
+  padding: 0.45rem;
   cursor: pointer;
-  border-radius: 0.6rem;
-  transition: background 0.2s;
+  border-radius: var(--radius-sm, 0.5rem);
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
 }
 
 .backBtn:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.18);
+  transform: translateX(-1px);
+}
+
+.backBtn:active {
+  transform: scale(0.95);
 }
 
 .headerLogo {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
   object-fit: contain;
   background: #ffffff;
   padding: 2px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .title {
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 600;
   margin: 0;
   color: #ffffff;
+  letter-spacing: -0.01em;
 }
 
 /* ─── Camera Viewport ────────────────────────────────── */
@@ -51,7 +62,7 @@
   flex: 1;
   position: relative;
   overflow: hidden;
-  background: #000;
+  background: #0a0a0a;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -85,22 +96,52 @@
 }
 
 .scanFrame {
-  width: 220px;
-  height: 280px;
-  border: 2px dashed rgba(255, 255, 255, 0.3);
+  width: 210px;
+  height: 270px;
+  border: 2px dashed rgba(255, 255, 255, 0.2);
   border-radius: 50%;
-  transition: border-color 0.3s, box-shadow 0.3s;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+
+/* Subtle corner guides */
+.scanFrame::before,
+.scanFrame::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.scanFrame::before {
+  inset: -8px;
+}
+
+.scanFrame::after {
+  inset: 8px;
 }
 
 .scanFrameActive {
-  border-color: var(--binus-accent);
-  box-shadow: 0 0 30px rgba(0, 163, 224, 0.25);
-  animation: pulseFrame 1.5s ease-in-out infinite;
+  border-color: rgba(0, 163, 224, 0.6);
+  box-shadow:
+    0 0 30px rgba(0, 163, 224, 0.12),
+    inset 0 0 30px rgba(0, 163, 224, 0.05);
+  animation: pulseFrame 2s ease-in-out infinite;
+}
+
+.scanFrameActive::before {
+  border-color: rgba(0, 163, 224, 0.15);
+}
+
+.scanFrameActive::after {
+  border-color: rgba(0, 163, 224, 0.1);
 }
 
 @keyframes pulseFrame {
-  0%, 100% { box-shadow: 0 0 20px rgba(0, 163, 224, 0.15); }
-  50%      { box-shadow: 0 0 40px rgba(0, 163, 224, 0.4); }
+  0%, 100% { box-shadow: 0 0 20px rgba(0, 163, 224, 0.08), inset 0 0 20px rgba(0, 163, 224, 0.03); }
+  50%      { box-shadow: 0 0 40px rgba(0, 163, 224, 0.2), inset 0 0 40px rgba(0, 163, 224, 0.08); }
 }
 
 /* ─── Match Overlay ──────────────────────────────────── */
@@ -115,13 +156,25 @@
   z-index: 5;
 }
 
-.matchOverlay { background: rgba(0, 0, 0, 0.55); }
-.doneOverlay  { background: rgba(0, 0, 0, 0.7); }
+.matchOverlay {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.doneOverlay {
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
 .errorOverlay {
   background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   flex-direction: column;
-  gap: 1rem;
-  color: #ef4444;
+  gap: 1.25rem;
+  color: var(--error, #ef4444);
   text-align: center;
   padding: 2rem;
 }
@@ -131,121 +184,146 @@
   text-align: center;
   background: #ffffff;
   border: none;
-  border-radius: 1.5rem;
+  border-radius: var(--radius-xl, 1.5rem);
   padding: 2rem 2.5rem;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-  animation: slideUp 0.35s ease-out;
-  color: var(--text-primary);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  color: var(--text-primary, #0F1D35);
+  max-width: 320px;
+  width: 85%;
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(24px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(30px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-.matchIcon { color: var(--binus-accent); }
+.matchIcon { color: var(--binus-accent, #00A3E0); }
 
 .matchCard h3 {
-  font-size: 1.3rem;
-  margin: 0.75rem 0 0.25rem;
-  color: var(--text-primary);
+  font-size: 1.25rem;
+  margin: 0.75rem 0 0.2rem;
+  color: var(--text-primary, #0F1D35);
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .matchCard p {
-  color: var(--text-secondary);
+  color: var(--text-secondary, #5A6B82);
   margin: 0.15rem 0;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
 }
 
 .matchConf {
-  color: var(--binus-blue) !important;
+  color: var(--binus-blue, #0054A6) !important;
   font-weight: 600;
-  font-size: 0.85rem !important;
-  margin-top: 0.5rem !important;
+  font-size: 0.82rem !important;
+  margin-top: 0.6rem !important;
+  padding: 0.3rem 0.75rem;
+  background: var(--binus-light, #E8F1FB);
+  border-radius: var(--radius-full, 9999px);
+  display: inline-block;
 }
 
 .clockingSpinner {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.4rem;
-  color: var(--text-secondary);
-  font-size: 0.85rem;
-  margin-top: 0.75rem;
+  gap: 0.45rem;
+  color: var(--text-secondary, #5A6B82);
+  font-size: 0.82rem;
+  margin-top: 0.85rem;
+  font-weight: 500;
 }
 
 /* ─── Done Card ──────────────────────────────────────── */
-.doneIcon { color: #16a34a; }
+.doneIcon { color: var(--success, #10B981); }
 
 .doneCard h3 {
-  color: #16a34a;
-  font-size: 1.2rem;
-  margin: 0.75rem 0 0.5rem;
+  color: var(--success, #10B981);
+  font-size: 1.15rem;
+  margin: 0.75rem 0 0.4rem;
+  font-weight: 700;
 }
 
 .doneName {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary, #0F1D35);
   margin: 0.25rem 0;
+  letter-spacing: -0.01em;
 }
 
 .doneStatus {
   display: inline-block;
-  padding: 0.25rem 0.85rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
+  padding: 0.3rem 1rem;
+  border-radius: var(--radius-full, 9999px);
+  font-size: 0.78rem;
   font-weight: 600;
   margin: 0.5rem 0;
-  background: #dcfce7;
-  color: #16a34a;
+  background: var(--success-bg, #ECFDF5);
+  color: var(--success-dark, #047857);
+  letter-spacing: 0.02em;
 }
 
 .doneTime {
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  margin: 0.25rem 0 0;
+  color: var(--text-muted, #94A3B8);
+  font-size: 0.78rem;
+  margin: 0.3rem 0 0;
+  font-weight: 500;
 }
 
 /* ─── Error ──────────────────────────────────────────── */
 .retryBtn {
-  padding: 0.65rem 1.5rem;
+  padding: 0.7rem 1.75rem;
   border: none;
-  background: var(--binus-blue);
+  background: var(--binus-gradient, linear-gradient(135deg, #0054A6 0%, #00A3E0 100%));
   color: #ffffff;
-  border-radius: 0.75rem;
-  font-size: 0.9rem;
+  border-radius: var(--radius-md, 0.875rem);
+  font-size: 0.88rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.25s ease;
+  box-shadow: 0 4px 16px rgba(0, 84, 166, 0.3);
+  letter-spacing: 0.01em;
 }
 
-.retryBtn:hover { background: var(--binus-dark); }
+.retryBtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(0, 84, 166, 0.4);
+}
+
+.retryBtn:active {
+  transform: scale(0.97);
+}
 
 /* ─── Bottom Status Bar ──────────────────────────────── */
 .statusBar {
   padding: 1rem 1.25rem;
-  background: var(--binus-blue);
+  background: linear-gradient(180deg, rgba(0, 58, 117, 0.98), rgba(0, 84, 166, 0.95));
   z-index: 10;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .statusText {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.4rem;
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 0.85rem;
+  gap: 0.45rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.82rem;
   margin: 0;
   font-weight: 500;
+  letter-spacing: 0.01em;
 }
 
 .statusTextDone {
   text-align: center;
-  color: #bbf7d0;
-  font-size: 0.85rem;
+  color: #86EFAC;
+  font-size: 0.82rem;
   font-weight: 600;
   margin: 0;
+  letter-spacing: 0.01em;
 }
 
 /* ─── Spinner ────────────────────────────────────────── */

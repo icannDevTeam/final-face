@@ -9,32 +9,39 @@ delete L.Icon.Default.prototype._getIconUrl;
 // Campus marker (blue pin)
 const campusIcon = new L.DivIcon({
   className: 'campus-marker',
-  html: `<div style="
-    width:18px;height:18px;border-radius:50%;
-    background:#0054A6;border:3px solid #fff;
-    box-shadow:0 2px 6px rgba(0,0,0,.35);
-  "></div>`,
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
+  html: `<div style="position:relative;width:24px;height:24px;">
+    <div style="
+      position:absolute;inset:0;border-radius:50%;
+      background:rgba(0,84,166,.15);
+    "></div>
+    <div style="
+      position:absolute;top:4px;left:4px;width:16px;height:16px;
+      border-radius:50%;background:#0054A6;
+      border:2.5px solid #fff;
+      box-shadow:0 2px 8px rgba(0,20,60,.3);
+    "></div>
+  </div>`,
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
 });
 
 // User marker (pulsing teal dot)
 const userIcon = new L.DivIcon({
   className: 'user-marker',
-  html: `<div style="position:relative;width:20px;height:20px;">
+  html: `<div style="position:relative;width:24px;height:24px;">
     <div style="
       position:absolute;inset:0;border-radius:50%;
-      background:rgba(0,163,224,.25);
+      background:rgba(0,163,224,.2);
       animation:userPulse 2s ease-in-out infinite;
     "></div>
     <div style="
-      position:absolute;top:4px;left:4px;width:12px;height:12px;
+      position:absolute;top:5px;left:5px;width:14px;height:14px;
       border-radius:50%;background:#00A3E0;
-      border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);
+      border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,20,60,.25);
     "></div>
   </div>`,
-  iconSize: [20, 20],
-  iconAnchor: [10, 10],
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
 });
 
 // Inject keyframe animation once
@@ -99,12 +106,42 @@ export default function LiveMap({
 
   return (
     <div style={{
-      borderRadius: '1rem',
+      borderRadius: 'var(--radius-lg, 1.25rem)',
       overflow: 'hidden',
-      boxShadow: '0 2px 12px rgba(0,0,0,.08)',
-      border: '1px solid var(--border, #e5e7eb)',
+      boxShadow: 'var(--shadow-md, 0 4px 16px rgba(0,60,120,.07))',
+      border: '1px solid var(--border-light, #F1F5F9)',
       margin: '0 1rem 1rem',
+      background: '#fff',
     }}>
+      {/* Map label */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0.6rem 0.9rem',
+        borderBottom: '1px solid var(--border-light, #F1F5F9)',
+        fontSize: '0.72rem',
+        fontWeight: 600,
+        color: 'var(--text-secondary, #5A6B82)',
+        letterSpacing: '0.04em',
+        textTransform: 'uppercase',
+      }}>
+        <span>📍 Live Location</span>
+        {userPos && (
+          <span style={{
+            fontWeight: 500,
+            fontSize: '0.7rem',
+            color: inRange ? 'var(--success-dark, #047857)' : 'var(--warning-dark, #B45309)',
+            background: inRange ? 'var(--success-bg, #ECFDF5)' : 'var(--warning-bg, #FFFBEB)',
+            padding: '0.15rem 0.5rem',
+            borderRadius: 'var(--radius-full, 9999px)',
+            textTransform: 'none',
+            letterSpacing: '0',
+          }}>
+            {inRange ? '● In range' : '○ Out of range'}
+          </span>
+        )}
+      </div>
       <MapContainer
         center={[campusLat, campusLng]}
         zoom={16}
@@ -112,7 +149,7 @@ export default function LiveMap({
         dragging={true}
         zoomControl={false}
         attributionControl={false}
-        style={{ height: '220px', width: '100%' }}
+        style={{ height: '200px', width: '100%' }}
       >
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -123,11 +160,11 @@ export default function LiveMap({
           center={[campusLat, campusLng]}
           radius={campusRadius}
           pathOptions={{
-            color: inRange ? '#16a34a' : '#ea580c',
-            fillColor: inRange ? '#dcfce7' : '#fef3c7',
-            fillOpacity: 0.25,
+            color: inRange ? '#10B981' : '#F59E0B',
+            fillColor: inRange ? '#ECFDF5' : '#FFFBEB',
+            fillOpacity: 0.2,
             weight: 2,
-            dashArray: '6 4',
+            dashArray: '8 5',
           }}
         />
 
