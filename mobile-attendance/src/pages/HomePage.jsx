@@ -4,6 +4,7 @@ import { Clock, Fingerprint, CheckCircle2, Users, MapPin, MapPinOff, AlertTriang
 import { loadModels, loadDescriptors, isModelsLoaded, getLoadedCount } from '../lib/faceRecognition';
 import { getTodaySummary } from '../lib/api';
 import { watchProximity, getCampusConfig } from '../lib/geolocation';
+import LiveMap from '../components/LiveMap';
 import styles from '../styles/Home.module.css';
 
 export default function HomePage() {
@@ -167,6 +168,21 @@ export default function HomePage() {
           </div>
         )}
       </div>
+
+      {/* Live Map */}
+      {(() => {
+        const campus = getCampusConfig();
+        return (
+          <LiveMap
+            campusLat={campus.lat}
+            campusLng={campus.lng}
+            campusRadius={campus.radius}
+            userLat={location?.lat ?? null}
+            userLng={location?.lng ?? null}
+            inRange={inRange}
+          />
+        );
+      })()}
 
       {/* Today summary */}
       {summary && summary.total > 0 && (

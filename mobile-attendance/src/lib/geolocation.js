@@ -9,7 +9,7 @@
 // ─── Campus coordinates (BINUS School Simprug) ───────────────────────
 const CAMPUS_LAT = parseFloat(import.meta.env.VITE_CAMPUS_LAT) || -6.2307;
 const CAMPUS_LNG = parseFloat(import.meta.env.VITE_CAMPUS_LNG) || 106.7865;
-const CAMPUS_RADIUS_M = parseFloat(import.meta.env.VITE_CAMPUS_RADIUS) || 200; // meters
+const CAMPUS_RADIUS_M = parseFloat(import.meta.env.VITE_CAMPUS_RADIUS) || 500; // meters
 
 // ─── Haversine distance (metres) ─────────────────────────────────────
 function haversineMetres(lat1, lon1, lat2, lon2) {
