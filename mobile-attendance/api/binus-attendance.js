@@ -11,8 +11,9 @@
  *   BINUS_USER_ACTION — UserAction field (default: "TEACHER7")
  */
 
-const BINUS_AUTH_URL = 'https://binusian.ws/binusschool/auth/token';
-const BINUS_ATTENDANCE_URL = 'https://binusian.ws/binusschool/bss-add-simprug-attendance-fr';
+const BINUS_BASE = process.env.BINUS_API_BASE || 'https://binusian.ws';
+const BINUS_AUTH_URL = `${BINUS_BASE}/binusschool/auth/token`;
+const BINUS_ATTENDANCE_URL = `${BINUS_BASE}/binusschool/bss-add-simprug-attendance-fr`;
 
 async function getBinusToken(apiKey) {
   const resp = await fetch(BINUS_AUTH_URL, {
