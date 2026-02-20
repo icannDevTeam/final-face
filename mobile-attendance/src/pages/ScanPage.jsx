@@ -314,7 +314,7 @@ export default function ScanPage() {
         {phase === 'done' && (
           <p className={styles.statusTextDone}>Returning to home…</p>
         )}
-        <p className={styles.scanCopyright}>© 2026 BINUS School AI Club</p>
+        <p className={styles.scanCopyright}>© 2026 BINUS School Simprug AI Club</p>
       </div>
     </div>
   );
