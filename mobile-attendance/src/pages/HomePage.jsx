@@ -198,7 +198,7 @@ export default function HomePage() {
 
       {/* Copyright */}
       <footer className={styles.copyright}>
-        <span>© 2026 BINUS School AI Club</span>
+        <span>© 2026 BINUS School Simprug AI Club</span>
       </footer>
 
     </div>
