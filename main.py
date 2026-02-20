@@ -229,7 +229,11 @@ security_logger = logging.getLogger('FacialRecognitionSecurity')
 
 
 def upload_attendance_to_firebase(local_path, date_only):
-    """Upload the daily attendance JSON to Firebase Firestore."""
+    """Upload the daily attendance JSON to Firebase Firestore.
+
+    Writes each student record to the subcollection
+    attendance/{date}/records/{employeeNo} so the dashboard can read them.
+    """
     if not (CONFIG.get("upload_attendance_to_firebase", False) and FIREBASE_ENABLED):
         return
     try:
@@ -237,8 +241,33 @@ def upload_attendance_to_firebase(local_path, date_only):
             day_data = json.load(f) or {}
         app = initialize_firebase_app()
         db = fb_firestore.client(app=app)
-        db.collection("attendance").document(date_only).set(day_data, merge=True)
-        print(f"☁️ Uploaded attendance to Firestore: attendance/{date_only}")
+
+        # Write individual records to the subcollection the dashboard reads
+        records_ref = db.collection("attendance").document(date_only).collection("records")
+        count = 0
+        for name, entry in day_data.items():
+            emp_no = entry.get("employeeNo", entry.get("employee_no", ""))
+            if not emp_no:
+                continue
+            doc_data = {
+                "name": name,
+                "employeeNo": emp_no,
+                "timestamp": entry.get("time", ""),
+                "status": entry.get("status", "Present"),
+                "late": entry.get("status", "Present") == "Late",
+                "homeroom": entry.get("class", ""),
+                "grade": entry.get("grade", ""),
+                "source": entry.get("source", "webcam_face"),
+                "updatedAt": datetime.now().isoformat(),
+            }
+            records_ref.document(emp_no).set(doc_data, merge=True)
+            count += 1
+
+        # Update day-level summary
+        db.collection("attendance").document(date_only).set(
+            {"lastUpdated": datetime.now().isoformat()}, merge=True
+        )
+        print(f"☁️ Uploaded {count} attendance records to Firestore: attendance/{date_only}/records/")
     except Exception as e:
         print(f"⚠️ Failed to upload attendance to Firestore: {e}")
 

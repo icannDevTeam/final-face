@@ -1180,18 +1180,33 @@ def _upload_attendance_record(db, name: str, employee_no: str,
     if db is not None:
         try:
             today = datetime.now().strftime("%Y-%m-%d")
-            doc_id = f"{employee_no}_{today}"
             record = {
                 "name": name,
                 "employeeNo": employee_no,
                 "time": event_time,
                 "date": today,
                 "status": status,
+                "late": status == "Late",
                 "source": "hikvision_terminal",
                 "device": f"DS-K1T341AMF@{HIKVISION_IP}",
                 "timestamp": datetime.now().isoformat(),
             }
-            db.collection("attendance").document(doc_id).set(record, merge=True)
+            # Enrich with class/grade metadata
+            if student_metadata:
+                meta = student_metadata.get_student(employee_no)
+                if not meta:
+                    meta = student_metadata.find_by_name(name)
+                if meta:
+                    record["homeroom"] = meta.get("homeroom", "")
+                    record["grade"] = meta.get("grade", "")
+
+            # Write to subcollection: attendance/{date}/records/{employeeNo}
+            doc_ref = db.collection("attendance").document(today).collection("records").document(employee_no)
+            doc_ref.set(record, merge=True)
+            # Update day-level summary timestamp
+            db.collection("attendance").document(today).set(
+                {"lastUpdated": datetime.now().isoformat()}, merge=True
+            )
             print(f"   ☁️  Synced to Firebase: {name} → {status}")
         except Exception as e:
             print(f"   ⚠️  Firebase sync error: {e}")
