@@ -38,7 +38,7 @@ def get_auth_token():
     Get authorization token from Binus School API
     Returns the token string if successful, None otherwise
     """
-    url = "https://binusian.ws/binusschool/auth/token"
+    url = "http://binusian.ws/binusschool/auth/token"
     # Basic authorization header as specified in documentation
     auth_header = api_key
     headers = {
@@ -217,7 +217,7 @@ def get_student_photos(grade="1", homeroom="1A", student_ids=None, token=None):
         token = get_auth_token()
         if token is None:
             return None
-    url = "https://binusian.ws/binusschool/bss-get-simprug-studentphoto-fr"
+    url = "http://binusian.ws/binusschool/bss-get-simprug-studentphoto-fr"
     # Correct authorization header format (Bearer, not Bear)
     headers = {
         "Authorization": f"Bearer {token}",
@@ -292,7 +292,7 @@ def get_student_photos(grade="1", homeroom="1A", student_ids=None, token=None):
 def get_student_by_id_c2(student_id, token=None):
     """C.2 Student Enrollment: Lookup a student by IdStudent and return enrollment dict.
 
-    Endpoint (UAT): https://binusian.ws/binusschool/bss-student-enrollment
+    Endpoint (UAT): http://binusian.ws/binusschool/bss-student-enrollment
     Method: POST, Auth: Bearer <TOKEN_API>
     Body: { "IdStudent": "1111111" }
     Success: { "studentDataResponse": { "studentName": ..., "gradeCode": ..., "gradeName": ..., "class": "6C" }, "resultCode": 200 }
@@ -308,7 +308,7 @@ def get_student_by_id_c2(student_id, token=None):
             if token is None:
                 return None
 
-        url = "https://binusian.ws/binusschool/bss-student-enrollment"
+        url = "http://binusian.ws/binusschool/bss-student-enrollment"
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
@@ -345,7 +345,7 @@ def insert_student_attendance(attendance_data, token=None):
     Insert student attendance record into the e-Desk database via Binus School API.
 
     B.2 API spec:
-      POST https://binusian.ws/binusschool/bss-add-simprug-attendance-fr
+      POST http://binusian.ws/binusschool/bss-add-simprug-attendance-fr
       Body: { "IdStudent": str, "IdBinusian": str, "ImageDesc": str, "UserAction": str }
       Success: { "isSuccess": true, "statusCode": 200, "message": "OK", ... }
 
@@ -362,7 +362,7 @@ def insert_student_attendance(attendance_data, token=None):
         if token is None:
             return False
 
-    url = "https://binusian.ws/binusschool/bss-add-simprug-attendance-fr"
+    url = "http://binusian.ws/binusschool/bss-add-simprug-attendance-fr"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
