@@ -247,15 +247,27 @@ def upload_attendance_to_firebase(local_path, date_only):
         count = 0
         for name, entry in day_data.items():
             emp_no = entry.get("employeeNo", entry.get("employee_no", ""))
+
+            # Fallback: look up employeeNo from student_metadata by name
+            if not emp_no and STUDENT_METADATA_ENABLED and _student_metadata:
+                meta = _student_metadata.find_by_name(name)
+                if meta:
+                    emp_no = meta.get("employeeNo", "")
+                    # If still empty, try idStudent as document key
+                    if not emp_no and meta.get("idStudent"):
+                        emp_no = str(meta["idStudent"])
+
             if not emp_no:
+                print(f"⚠️ Firebase skip: no employeeNo for '{name}' — enroll student first")
                 continue
+
             doc_data = {
                 "name": name,
                 "employeeNo": emp_no,
-                "timestamp": entry.get("time", ""),
+                "timestamp": entry.get("timestamp", entry.get("time", "")),
                 "status": entry.get("status", "Present"),
                 "late": entry.get("status", "Present") == "Late",
-                "homeroom": entry.get("class", ""),
+                "homeroom": entry.get("homeroom", entry.get("class", "")),
                 "grade": entry.get("grade", ""),
                 "source": entry.get("source", "webcam_face"),
                 "updatedAt": datetime.now().isoformat(),
@@ -1157,9 +1169,29 @@ def log_attendance(name, class_name=None, confidence=0.0, quality_score=0.0, sec
     py_qual = float(round(float(quality_score), 3)) if quality_score > 0 else None
     py_sec = float(round(float(security_score), 3)) if security_score > 0 else None
 
+    # Look up employeeNo from student_metadata (needed for Firebase subcollection key)
+    emp_no = ""
+    homeroom = ""
+    grade = ""
+    if STUDENT_METADATA_ENABLED and _student_metadata:
+        meta = _student_metadata.find_by_name(name)
+        if meta:
+            emp_no = meta.get("employeeNo", "")
+            homeroom = meta.get("homeroom", "")
+            grade = meta.get("grade", "")
+    # Fallback: use student ID if name matches a student_metadata entry with idStudent
+    if not emp_no and STUDENT_METADATA_ENABLED and _student_metadata:
+        meta = _student_metadata.find_by_name(name)
+        if meta and meta.get("idStudent"):
+            emp_no = str(meta["idStudent"])
+
     attendance_data = {
         name: {
             'timestamp': timestamp, 'status': status, 'late': is_late,
+            'time': current_time.strftime("%H:%M:%S"),
+            'employeeNo': emp_no,
+            'homeroom': homeroom,
+            'grade': grade,
             'confidence': py_conf,
             'quality_score': py_qual,
             'security_score': py_sec,
