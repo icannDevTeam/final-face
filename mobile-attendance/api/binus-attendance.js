@@ -11,11 +11,14 @@
  *   BINUS_USER_ACTION — UserAction field (default: "TEACHER7")
  */
 
-const BINUS_BASE = process.env.BINUS_API_BASE || 'https://binusian.ws';
+// BINUS API only serves on HTTP port 80 (HTTPS port 443 returns 404)
+const BINUS_BASE = 'http://binusian.ws';
 const BINUS_AUTH_URL = `${BINUS_BASE}/binusschool/auth/token`;
 const BINUS_ATTENDANCE_URL = `${BINUS_BASE}/binusschool/bss-add-simprug-attendance-fr`;
 
 async function getBinusToken(apiKey) {
+  // Use node-fetch or https.get with agent for SSL bypass
+  const fetch = globalThis.fetch || (await import('node-fetch')).default;
   const resp = await fetch(BINUS_AUTH_URL, {
     method: 'GET',
     headers: { Authorization: `Basic ${apiKey}` },
