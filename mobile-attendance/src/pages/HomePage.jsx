@@ -39,10 +39,10 @@ export default function HomePage() {
       setStatus('loading');
       try {
         await loadModels((msg) => !cancelled && setStatusMsg(msg));
-        const count = await loadDescriptors((msg) => !cancelled && setStatusMsg(msg));
+        await loadDescriptors((msg) => !cancelled && setStatusMsg(msg));
         if (!cancelled) {
           setStatus('ready');
-          setStatusMsg(`${count} student${count !== 1 ? 's' : ''} enrolled`);
+          setStatusMsg('System ready');
         }
       } catch (err) {
         if (!cancelled) {
@@ -173,6 +173,33 @@ export default function HomePage() {
         );
       })()}
 
+      {/* SPIRIT Values Scrolling Banner */}
+      <div className={styles.spiritBanner}>
+        <div className={styles.spiritTrack}>
+          {[...Array(2)].map((_, i) => (
+            <div className={styles.spiritSet} key={i}>
+              {[
+                { letter: 'S', value: 'Striving for Excellence' },
+                { letter: 'P', value: 'Perseverance' },
+                { letter: 'I', value: 'Integrity' },
+                { letter: 'R', value: 'Respect' },
+                { letter: 'I', value: 'Innovation' },
+                { letter: 'T', value: 'Teamwork' },
+              ].map((item, j) => (
+                <span className={styles.spiritItem} key={j}>
+                  <span className={styles.spiritLetter}>{item.letter}</span>
+                  <span className={styles.spiritValue}>{item.value}</span>
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Copyright */}
+      <footer className={styles.copyright}>
+        <span>© 2026 BINUS School AI Club</span>
+      </footer>
 
     </div>
   );
