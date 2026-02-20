@@ -74,9 +74,9 @@ FIREBASE_BUCKET = os.getenv(
 
 # Binus School API
 BINUS_API_KEY = os.getenv("API_KEY", "")
-BINUS_AUTH_URL = "https://binusian.ws/binusschool/auth/token"
-BINUS_STUDENT_URL = "https://binusian.ws/binusschool/bss-student-enrollment"
-BINUS_PHOTOS_URL = "https://binusian.ws/binusschool/bss-get-simprug-studentphoto-fr"
+BINUS_AUTH_URL = "http://binusian.ws/binusschool/auth/token"
+BINUS_STUDENT_URL = "http://binusian.ws/binusschool/bss-student-enrollment"
+BINUS_PHOTOS_URL = "http://binusian.ws/binusschool/bss-get-simprug-studentphoto-fr"
 
 # Port for temporary HTTP server that serves face images to the device
 FACE_SERVER_PORT = int(os.getenv("FACE_SERVER_PORT", "8888"))
