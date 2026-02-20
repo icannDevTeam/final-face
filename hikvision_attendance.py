@@ -1199,11 +1199,11 @@ def _upload_attendance_record(db, name: str, employee_no: str,
     # ── BINUS API upload (non-blocking) ──
     def _push_to_binus():
         try:
-            meta = student_metadata.find_by_name(name)
+            # Look up metadata: try by employeeNo first (primary key), then name, then as idStudent
+            meta = student_metadata.get_student(employee_no)
             if not meta:
-                meta = student_metadata.find_by_employee_no(employee_no) if hasattr(student_metadata, 'find_by_employee_no') else None
+                meta = student_metadata.find_by_name(name)
             if not meta:
-                # Try using employee_no directly as idStudent (enroll-class uses IdStudent as employeeNo)
                 meta = student_metadata.find_by_student_id(employee_no)
 
             id_student = ""

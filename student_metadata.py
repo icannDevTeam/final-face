@@ -143,12 +143,21 @@ def get_all_students() -> dict:
 
 
 def find_by_name(name: str) -> dict | None:
-    """Find student metadata by exact name match."""
+    """Find student metadata by exact name match.
+    
+    If multiple entries exist for the same name, prefer the one
+    that has idStudent populated (from BINUS API enrollment).
+    """
     data = _load_local()
+    best = None
     for entry in data.values():
         if entry.get("name", "").strip().lower() == name.strip().lower():
-            return entry
-    return None
+            # Prefer entry with idStudent populated
+            if entry.get("idStudent"):
+                return entry
+            if best is None:
+                best = entry
+    return best
 
 
 def find_by_student_id(id_student: str) -> dict | None:
