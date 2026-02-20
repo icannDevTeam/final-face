@@ -1,0 +1,59 @@
+# Alert Rules — BINUS Facial Attendance
+
+groups:
+  - name: api_alerts
+    rules:
+      # API response time > 2s for 5 minutes
+      - alert: HighAPILatency
+        expr: histogram_quantile(0.95, rate(nextjs_http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency on {{ $labels.route }}"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.route }}"
+
+      # Error rate > 5% for 5 minutes
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(nextjs_http_request_errors_total[5m])) by (route)
+            /
+            sum(rate(nextjs_http_requests_total[5m])) by (route)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate on {{ $labels.route }}"
+          description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.route }}"
+
+      # API down (no scrape for 1 minute)
+      - alert: APIDown
+        expr: up{job="nextjs-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Next.js API is down"
+          description: "Cannot scrape metrics from the Next.js API at {{ $labels.instance }}"
+
+      # High memory usage (>512MB)
+      - alert: HighMemoryUsage
+        expr: nextjs_process_resident_memory_bytes > 536870912
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Node.js process is using {{ $value | humanize1024 }}B of memory"
+
+      # Too many in-flight requests
+      - alert: HighConcurrency
+        expr: sum(nextjs_http_requests_in_flight) > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of concurrent requests"
+          description: "{{ $value }} requests currently in-flight"
