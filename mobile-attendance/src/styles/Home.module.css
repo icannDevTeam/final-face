@@ -295,3 +295,89 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
+
+/* ─── SPIRIT Values Scrolling Banner ─────────────────── */
+.spiritBanner {
+  overflow: hidden;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border-light);
+  padding: 0.6rem 0;
+  position: relative;
+}
+
+.spiritBanner::before,
+.spiritBanner::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2rem;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.spiritBanner::before {
+  left: 0;
+  background: linear-gradient(to right, var(--bg-card), transparent);
+}
+
+.spiritBanner::after {
+  right: 0;
+  background: linear-gradient(to left, var(--bg-card), transparent);
+}
+
+.spiritTrack {
+  display: flex;
+  width: max-content;
+  animation: scrollSpirit 20s linear infinite;
+}
+
+.spiritSet {
+  display: flex;
+  gap: 1.5rem;
+  padding: 0 1.5rem;
+}
+
+.spiritItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.85rem;
+  background: var(--binus-light);
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(0, 84, 166, 0.08);
+  white-space: nowrap;
+  transition: transform 0.2s var(--ease-out);
+}
+
+.spiritLetter {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--binus-blue);
+  min-width: 1rem;
+  text-align: center;
+}
+
+.spiritValue {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.01em;
+}
+
+@keyframes scrollSpirit {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ─── Copyright Footer ───────────────────────────────── */
+.copyright {
+  text-align: center;
+  padding: 0.65rem 1rem;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
