@@ -47,9 +47,9 @@ HIK_BASE       = f"http://{HIKVISION_IP}"
 HIK_AUTH       = HTTPDigestAuth(HIKVISION_USER, HIKVISION_PASS)
 
 BINUS_API_KEY    = os.getenv("API_KEY", "")
-BINUS_AUTH_URL   = "http://binusian.ws/binusschool/auth/token"
-BINUS_STUDENT_URL = "http://binusian.ws/binusschool/bss-student-enrollment"
-BINUS_PHOTOS_URL  = "http://binusian.ws/binusschool/bss-get-simprug-studentphoto-fr"
+BINUS_AUTH_URL   = "https://binusian.ws/binusschool/auth/token"
+BINUS_STUDENT_URL = "https://binusian.ws/binusschool/bss-student-enrollment"
+BINUS_PHOTOS_URL  = "https://binusian.ws/binusschool/bss-get-simprug-studentphoto-fr"
 
 FIREBASE_CREDENTIALS = os.getenv(
     "FIREBASE_CREDENTIALS",

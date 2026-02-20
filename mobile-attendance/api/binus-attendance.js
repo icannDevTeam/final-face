@@ -32,10 +32,19 @@ async function getBinusToken(apiKey) {
 }
 
 export default async function handler(req, res) {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS — restrict to known origins in production
+  const allowedOrigins = [
+    process.env.CORS_ORIGIN,                    // explicit env override
+    'https://mobile-attendance.vercel.app',      // production
+    'http://localhost:5173',                      // Vite dev
+    'http://localhost:4173',                      // Vite preview
+  ].filter(Boolean);
+  const origin = req.headers.origin || '';
+  const corsOrigin = allowedOrigins.includes(origin) ? origin : allowedOrigins[0] || '';
+  res.setHeader('Access-Control-Allow-Origin', corsOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Vary', 'Origin');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();

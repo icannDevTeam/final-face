@@ -10,6 +10,7 @@
 const CAMPUS_LAT = parseFloat(import.meta.env.VITE_CAMPUS_LAT) || -6.2307;
 const CAMPUS_LNG = parseFloat(import.meta.env.VITE_CAMPUS_LNG) || 106.7865;
 const CAMPUS_RADIUS_M = parseFloat(import.meta.env.VITE_CAMPUS_RADIUS) || 500; // meters
+const MAX_GPS_ACCURACY_M = 100; // reject readings less accurate than 100m (anti-spoof)
 
 // ─── Haversine distance (metres) ─────────────────────────────────────
 function haversineMetres(lat1, lon1, lat2, lon2) {
@@ -49,6 +50,12 @@ export async function checkProximity() {
   try {
     const pos = await getCurrentPosition();
     const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+
+    // Reject suspiciously inaccurate GPS readings (potential spoofing)
+    if (accuracy > MAX_GPS_ACCURACY_M) {
+      throw new Error(`GPS accuracy too low (${Math.round(accuracy)}m). Please ensure GPS is enabled and you are outdoors.`);
+    }
+
     const distance = haversineMetres(lat, lng, CAMPUS_LAT, CAMPUS_LNG);
 
     return {
@@ -84,6 +91,13 @@ export function watchProximity(onChange, onError) {
   const id = navigator.geolocation.watchPosition(
     (pos) => {
       const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+
+      // Skip updates with suspiciously low accuracy
+      if (accuracy > MAX_GPS_ACCURACY_M) {
+        onError?.(`GPS accuracy too low (${Math.round(accuracy)}m). Waiting for better signal.`);
+        return;
+      }
+
       const distance = haversineMetres(lat, lng, CAMPUS_LAT, CAMPUS_LNG);
       onChange({
         inRange: distance <= CAMPUS_RADIUS_M,
