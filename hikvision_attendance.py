@@ -1175,26 +1175,88 @@ def _get_firestore_client():
 
 def _upload_attendance_record(db, name: str, employee_no: str,
                               event_time: str, status: str):
-    """Upload a single attendance record to Firestore."""
-    if db is None:
-        return
-    try:
-        today = datetime.now().strftime("%Y-%m-%d")
-        doc_id = f"{employee_no}_{today}"
-        record = {
-            "name": name,
-            "employeeNo": employee_no,
-            "time": event_time,
-            "date": today,
-            "status": status,
-            "source": "hikvision_terminal",
-            "device": f"DS-K1T341AMF@{HIKVISION_IP}",
-            "timestamp": datetime.now().isoformat(),
-        }
-        db.collection("attendance").document(doc_id).set(record, merge=True)
-        print(f"   ☁️  Synced to Firebase: {name} → {status}")
-    except Exception as e:
-        print(f"   ⚠️  Firebase sync error: {e}")
+    """Upload a single attendance record to Firestore AND the BINUS API."""
+    # ── Firebase upload ──
+    if db is not None:
+        try:
+            today = datetime.now().strftime("%Y-%m-%d")
+            doc_id = f"{employee_no}_{today}"
+            record = {
+                "name": name,
+                "employeeNo": employee_no,
+                "time": event_time,
+                "date": today,
+                "status": status,
+                "source": "hikvision_terminal",
+                "device": f"DS-K1T341AMF@{HIKVISION_IP}",
+                "timestamp": datetime.now().isoformat(),
+            }
+            db.collection("attendance").document(doc_id).set(record, merge=True)
+            print(f"   ☁️  Synced to Firebase: {name} → {status}")
+        except Exception as e:
+            print(f"   ⚠️  Firebase sync error: {e}")
+
+    # ── BINUS API upload (non-blocking) ──
+    def _push_to_binus():
+        try:
+            meta = student_metadata.find_by_name(name)
+            if not meta:
+                meta = student_metadata.find_by_employee_no(employee_no) if hasattr(student_metadata, 'find_by_employee_no') else None
+            if not meta:
+                # Try using employee_no directly as idStudent (enroll-class uses IdStudent as employeeNo)
+                meta = student_metadata.find_by_student_id(employee_no)
+
+            id_student = ""
+            id_binusian = ""
+            if meta:
+                id_student = meta.get("idStudent", "")
+                id_binusian = meta.get("idBinusian", "")
+
+            if not id_student:
+                print(f"   ⚠️  BINUS API skipped for {name}: no IdStudent in metadata")
+                return
+
+            if not BINUS_API_KEY:
+                print(f"   ⚠️  BINUS API skipped: API_KEY not configured")
+                return
+
+            token = _binus_get_token()
+            if not token:
+                print(f"   ⚠️  BINUS API skipped: failed to get auth token")
+                return
+
+            body = {
+                "IdStudent": str(id_student),
+                "IdBinusian": str(id_binusian),
+                "ImageDesc": "-",
+                "UserAction": os.getenv("USER_ACTION", "TEACHER7"),
+            }
+            resp = requests.post(
+                "http://binusian.ws/binusschool/bss-add-simprug-attendance-fr",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            afr = result.get("attendanceFaceRecognitionResponse", {})
+            is_ok = (
+                result.get("isSuccess") is True
+                or result.get("resultCode") == 200
+                or (isinstance(afr, dict) and afr.get("success") is True)
+            )
+            if is_ok:
+                print(f"   ☁️  Synced to BINUS API: {name} (ID:{id_student})")
+            else:
+                msg = result.get("errorMessage") or result.get("message") or result
+                print(f"   ⚠️  BINUS API returned failure for {name}: {msg}")
+        except Exception as e:
+            print(f"   ⚠️  BINUS API sync error for {name}: {e}")
+
+    threading.Thread(target=_push_to_binus, daemon=True).start()
 
 
 def _determine_status(event_time_str: str) -> str:
