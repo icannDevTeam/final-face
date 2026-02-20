@@ -53,7 +53,7 @@ def main():
     print("=" * 60)
     print("  B.2 Attendance Insert — Simulation Test")
     print("=" * 60)
-    print(f"  Endpoint: http://binusian.ws/binusschool/bss-add-simprug-attendance-fr")
+    print(f"  Endpoint: https://binusian.ws/binusschool/bss-add-simprug-attendance-fr")
     print(f"  Time:     {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
 
