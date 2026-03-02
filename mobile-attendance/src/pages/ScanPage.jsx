@@ -253,6 +253,7 @@ export default function ScanPage() {
         {phase === 'scanning' && (
           <div className={styles.scanGuide}>
             <div className={`${styles.scanFrame} ${faceDetected ? styles.scanFrameActive : ''}`} />
+            {faceDetected && <div className={styles.scanLine} />}
           </div>
         )}
 

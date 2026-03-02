@@ -1,383 +1,623 @@
-.container {
-  min-height: 100dvh;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-primary);
-  color: var(--text-primary);
+/* ═══════════════════════════════════════════════════════════════════════
+   Home Page — BINUS Attendance Check-in
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ─── Keyframes ──────────────────────────────────────── */
+@keyframes pulseRing {
+  0%   { transform: scale(0.8); opacity: 0.4; }
+  100% { transform: scale(1.8); opacity: 0; }
 }
 
-/* ─── Top Bar ────────────────────────────────────────── */
-.topBar {
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadePulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 0; }
+}
+
+@keyframes tickerScroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ─── Page wrapper ───────────────────────────────────── */
+.page {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: linear-gradient(160deg, #f0f4ff 0%, #e8f2ff 50%, #eef5ff 100%);
+  font-family: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ─── Card shell ─────────────────────────────────────── */
+.card {
+  width: 100%;
+  max-width: 390px;
+  border-radius: 1.5rem;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.12),
+              0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+/* ─── Header ─────────────────────────────────────────── */
+.header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.25rem;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border-light);
-  box-shadow: var(--shadow-xs);
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  background: rgba(255, 255, 255, 0.92);
+  padding: 0.9rem 1.25rem;
+  background: linear-gradient(135deg, #1e3a5f 0%, #1a3252 100%);
 }
 
-.brandGroup {
+.headerLeft {
   display: flex;
   align-items: center;
   gap: 0.75rem;
 }
 
-.logo {
+.logoBox {
   width: 38px;
   height: 38px;
-  border-radius: var(--radius-sm);
-  object-fit: contain;
-  box-shadow: var(--shadow-sm);
-  border: 1px solid var(--border-light);
-}
-
-.brand {
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--binus-blue);
-  letter-spacing: -0.02em;
-}
-
-/* ─── Clock Section ──────────────────────────────────── */
-.clockSection {
-  text-align: center;
-  padding: 2rem 1rem 1.5rem;
-  background: var(--bg-card);
-  margin: 0.875rem 1rem 0;
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-md);
-  border: 1px solid var(--border-light);
-  position: relative;
+  border-radius: 0.75rem;
   overflow: hidden;
-}
-
-/* Subtle decorative gradient stripe */
-.clockSection::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--binus-gradient);
-  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-}
-
-.date {
-  color: var(--text-secondary);
-  font-size: 0.82rem;
-  font-weight: 500;
-  margin: 0 0 0.5rem;
-  letter-spacing: 0.01em;
-}
-
-.clock {
+  background: rgba(255, 255, 255, 0.15);
   display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 0.05rem;
-}
-
-.clockDigit {
-  font-size: 3.5rem;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-primary);
-  letter-spacing: -0.04em;
-  line-height: 1;
-}
-
-.clockSep {
-  font-size: 3rem;
-  font-weight: 300;
-  color: var(--binus-accent);
-  animation: blink 1s step-end infinite;
-  margin: 0 0.05rem;
-}
-
-.clockDigitSec {
-  font-size: 1.75rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 2.25rem;
-  opacity: 0.7;
-  line-height: 1;
-  align-self: flex-end;
-  margin-bottom: 0.15rem;
-}
-
-@keyframes blink {
-  50% { opacity: 0.15; }
-}
-
-.timezone {
-  color: var(--text-muted);
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  margin: 0.6rem 0 0;
-}
-
-/* ─── Clock In Button ────────────────────────────────── */
-.actionSection {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 1.25rem 1rem;
-  gap: 1rem;
-  min-height: 220px;
+  flex-shrink: 0;
 }
 
-.clockInBtn {
-  width: 160px;
-  height: 160px;
-  border-radius: 50%;
-  border: none;
-  background: var(--border);
-  color: var(--text-muted);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  cursor: not-allowed;
-  transition: all 0.5s var(--ease-out);
-  box-shadow: var(--shadow-sm);
-  position: relative;
-  -webkit-user-select: none;
-  user-select: none;
+.logoImg {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
 }
 
-/* Outer ring decoration */
-.clockInBtn::before {
-  content: '';
-  position: absolute;
-  inset: -6px;
-  border-radius: 50%;
-  border: 2px dashed var(--border);
-  opacity: 0.5;
-  transition: all 0.5s var(--ease-out);
-}
-
-.clockInBtn.clockInReady {
-  background: var(--binus-gradient);
+.headerTitle {
   color: #ffffff;
-  cursor: pointer;
-  box-shadow: var(--shadow-lg), 0 0 0 0 rgba(0, 163, 224, 0.15);
-  animation: pulseBtn 3s ease-in-out infinite;
-}
-
-.clockInBtn.clockInReady::before {
-  border-color: rgba(0, 163, 224, 0.3);
-  opacity: 1;
-  animation: spinRing 12s linear infinite;
-}
-
-@keyframes pulseBtn {
-  0%, 100% {
-    box-shadow:
-      var(--shadow-lg),
-      0 0 0 0 rgba(0, 84, 166, 0.12);
-  }
-  50% {
-    box-shadow:
-      0 12px 40px rgba(0, 84, 166, 0.22),
-      0 0 0 16px rgba(0, 163, 224, 0);
-  }
-}
-
-@keyframes spinRing {
-  to { transform: rotate(360deg); }
-}
-
-.clockInBtn.clockInReady:hover {
-  transform: scale(1.05);
-  box-shadow: var(--shadow-xl);
-}
-
-.clockInBtn.clockInReady:active {
-  transform: scale(0.95);
-  transition-duration: 0.1s;
-}
-
-.clockInIcon {
-  line-height: 0;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
-}
-
-.clockInLabel {
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
-.statusLine {
-  font-size: 0.78rem;
-  min-height: 1.2em;
+  font-weight: 600;
+  font-size: 0.875rem;
   margin: 0;
 }
 
-.statusLoading {
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
+.headerTime {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.55);
+  margin: 0;
 }
 
-.statusReady {
-  color: var(--success);
+/* ─── Status badge (header right) ────────────────────── */
+.statusBadge {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.375rem;
+  border-radius: 9999px;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.7rem;
   font-weight: 600;
+  transition: all 0.5s ease;
 }
 
-.statusError {
-  color: var(--error);
-  font-weight: 500;
+.statusBadge.out {
+  background: rgba(153, 27, 27, 0.2);
+  color: #fca5a5;
+  border: 1px solid rgba(153, 27, 27, 0.3);
 }
 
-/* ─── Location / Proximity Bar ───────────────────────── */
-.locationBar {
-  padding: 0 1rem 0.75rem;
+.statusBadge.in {
+  background: rgba(0, 84, 166, 0.2);
+  color: #93c5fd;
+  border: 1px solid rgba(0, 84, 166, 0.3);
 }
 
-.locationStatus {
+.statusBadge.checking {
+  background: rgba(0, 163, 224, 0.2);
+  color: #7dd3fc;
+  border: 1px solid rgba(0, 163, 224, 0.3);
+}
+
+.statusBadge.error {
+  background: rgba(251, 146, 60, 0.2);
+  color: #fdba74;
+  border: 1px solid rgba(251, 146, 60, 0.3);
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  animation: pulseRing 1.5s ease-out infinite;
+}
+
+.statusDot.out    { background: #991B1B; }
+.statusDot.in     { background: #0054A6; }
+.statusDot.checking { background: #00A3E0; }
+.statusDot.error  { background: #fb923c; }
+
+/* ─── Body ───────────────────────────────────────────── */
+.body {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* ─── Status card ────────────────────────────────────── */
+.statusCard {
+  border-radius: 1rem;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  transition: all 0.6s ease;
+}
+
+.statusCard.out {
+  background: linear-gradient(135deg, #fef2f2, #fde8e8);
+  border: 1.5px solid #e8a0a0;
+}
+
+.statusCard.in {
+  background: linear-gradient(135deg, #E8F1FB, #d6e8f7);
+  border: 1.5px solid #93c5fd;
+}
+
+.statusCard.checking {
+  background: linear-gradient(135deg, #e8f7fd, #d6f0fa);
+  border: 1.5px solid #7dd3fc;
+}
+
+.statusCard.error {
+  background: linear-gradient(135deg, #fffbeb, #fef3c7);
+  border: 1.5px solid #fcd34d;
+}
+
+/* ─── Fingerprint icon ───────────────────────────────── */
+.fingerprintWrap {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0.7rem 1rem;
-  border-radius: var(--radius-md);
-  font-size: 0.78rem;
-  font-weight: 500;
-  border: 1px solid transparent;
-  transition: all 0.3s var(--ease-out);
+  justify-content: center;
+  width: 120px;
+  height: 120px;
 }
 
-.locationOk {
-  background: var(--success-bg);
-  color: var(--success-dark);
-  border-color: rgba(16, 185, 129, 0.12);
-}
-
-.locationFar {
-  background: var(--warning-bg);
-  color: var(--warning-dark);
-  border-color: rgba(245, 158, 11, 0.12);
-}
-
-.locationError {
-  background: var(--error-bg);
-  color: var(--error-dark);
-  border-color: rgba(239, 68, 68, 0.12);
-}
-
-.locationLoading {
-  background: var(--binus-light);
-  color: var(--binus-blue);
-  border-color: rgba(0, 84, 166, 0.08);
-  animation: locationPulse 1.8s ease-in-out infinite;
-}
-
-@keyframes locationPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
-
-/* ─── SPIRIT Values Scrolling Banner ─────────────────── */
-.spiritBanner {
-  overflow: hidden;
-  background: var(--bg-card);
-  border-top: 1px solid var(--border-light);
-  padding: 0.6rem 0;
-  position: relative;
-}
-
-.spiritBanner::before,
-.spiritBanner::after {
-  content: '';
+/* Pulse rings */
+.pulseRing {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2rem;
-  z-index: 2;
+  border-radius: 50%;
+  animation: pulseRing 2s ease-out infinite;
+}
+
+.pulseRing.out    { background: #991B1B; }
+.pulseRing.in     { background: #0054A6; }
+.pulseRing.checking { background: #00A3E0; }
+.pulseRing.error  { background: #f59e0b; }
+
+.fingerprintCircle {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.fingerprintCircle.out {
+  background: linear-gradient(135deg, #991B1B, #7F1D1D);
+  box-shadow: 0 0 32px rgba(153, 27, 27, 0.5), 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.fingerprintCircle.in {
+  background: linear-gradient(135deg, #0054A6, #003A75);
+  box-shadow: 0 0 32px rgba(0, 84, 166, 0.5), 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.fingerprintCircle.checking {
+  background: linear-gradient(135deg, #00A3E0, #0078D4);
+  box-shadow: 0 0 32px rgba(0, 163, 224, 0.5), 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.fingerprintCircle.error {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  box-shadow: 0 0 32px rgba(245, 158, 11, 0.5), 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.fingerprintSvg {
+  width: 44px;
+  height: 44px;
+}
+
+.spinnerRing {
+  animation: spin 1s linear infinite;
+  transform-origin: 22px 22px;
+}
+
+/* ─── Status text ────────────────────────────────────── */
+.statusTextWrap {
+  text-align: center;
+  animation: slideUp 0.4s ease forwards;
+}
+
+.statusTitle {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0 0 0.25rem;
+}
+
+.statusTitle.out      { color: #991B1B; }
+.statusTitle.in       { color: #003A75; }
+.statusTitle.checking { color: #0078D4; }
+.statusTitle.error    { color: #b45309; }
+
+.statusSub {
+  font-size: 0.7rem;
+  color: #64748b;
+  margin: 0;
+}
+
+/* ─── Stats row ──────────────────────────────────────── */
+.statsRow {
+  display: flex;
+  width: 100%;
+  gap: 0.75rem;
+}
+
+.statBox {
+  flex: 1;
+  border-radius: 0.75rem;
+  padding: 0.625rem;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.statIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0 auto 0.25rem;
+  border-radius: 0.5rem;
+  background: linear-gradient(135deg, #d6e8f7, #E8F1FB);
+  color: #0054A6;
+}
+
+.statValue {
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: #1e293b;
+  margin-top: 0.125rem;
+}
+
+.statLabel {
+  font-size: 0.55rem;
+  color: #94a3b8;
+}
+
+/* ─── Map section ────────────────────────────────────── */
+.mapToggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 1rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: #f8fafc;
+  color: #475569;
+  border: 1.5px solid #e2e8f0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mapToggle:hover {
+  background: #f1f5f9;
+}
+
+.mapToggleLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mapChevron {
+  display: inline-block;
+  transition: transform 0.3s ease;
+}
+
+.mapChevron.open {
+  transform: rotate(180deg);
+}
+
+.mapSlideUp {
+  animation: slideUp 0.4s ease forwards;
+}
+
+/**  Static map preview (used when Leaflet is not loaded)  */
+.mapPreview {
+  position: relative;
+  border-radius: 1rem;
+  overflow: hidden;
+  height: 200px;
+  background: linear-gradient(135deg, #e8f0fe 0%, #dde8f5 50%, #d0e4f0 100%);
+}
+
+.mapGrid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.4;
+}
+
+.radiusCircle {
+  position: absolute;
+  border-radius: 50%;
+  border-width: 2px;
+  border-style: solid;
+  top: 50%;
+  left: 50%;
+  transform: translate(-80%, -60%);
+  transition: all 0.6s ease;
+}
+
+.lineToUser {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 
-.spiritBanner::before {
-  left: 0;
-  background: linear-gradient(to right, var(--bg-card), transparent);
+.campusPin {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  top: 28%;
+  left: 38%;
+  transform: translate(-50%, -50%);
 }
 
-.spiritBanner::after {
-  right: 0;
-  background: linear-gradient(to left, var(--bg-card), transparent);
+.campusPinLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  background: white;
+  color: #1e3a5f;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
-.spiritTrack {
+.campusPinLogo {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  border-radius: 2px;
+}
+
+.campusPinStem {
+  width: 2px;
+  height: 8px;
+  background: #1e3a5f;
+}
+
+.campusPinDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #1e3a5f;
+}
+
+.userPin {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 3px solid white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transform: translate(-50%, -50%);
+  transition: all 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.distLabel {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 0.75rem;
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.distLabel.out   { color: #991B1B; }
+.distLabel.in    { color: #003A75; }
+
+.accBadge {
+  position: absolute;
+  bottom: 0.75rem;
+  right: 0.75rem;
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.65rem;
+  background: rgba(255, 255, 255, 0.8);
+  color: #64748b;
+}
+
+/* ─── Leaflet map wrapper (real map) ─────────────────── */
+.realMap {
+  border-radius: 1rem;
+  overflow: hidden;
+  height: 200px;
+}
+
+/* ─── Primary button ─────────────────────────────────── */
+.primaryBtn {
+  width: 100%;
+  border-radius: 1rem;
+  padding: 1rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.primaryBtn.out {
+  background: linear-gradient(135deg, #991B1B, #7F1D1D);
+  box-shadow: 0 8px 24px rgba(153, 27, 27, 0.3);
+}
+
+.primaryBtn.in {
+  background: linear-gradient(135deg, #0054A6, #00A3E0);
+  box-shadow: 0 8px 24px rgba(0, 84, 166, 0.3);
+}
+
+.primaryBtn.checking {
+  background: linear-gradient(135deg, #00A3E0, #0078D4);
+  box-shadow: 0 8px 24px rgba(0, 163, 224, 0.3);
+  transform: scale(0.98);
+  opacity: 0.9;
+  cursor: not-allowed;
+}
+
+.primaryBtn.error {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  box-shadow: 0 8px 24px rgba(245, 158, 11, 0.3);
+}
+
+.primaryBtn:not(.checking):hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.primaryBtn:not(.checking):active {
+  transform: scale(0.98);
+}
+
+/* ─── Success banner ─────────────────────────────────── */
+.successBanner {
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.7rem;
+  text-align: center;
+  background: #E8F1FB;
+  color: #003A75;
+  border: 1px solid #93c5fd;
+  animation: slideUp 0.4s ease forwards;
+}
+
+/* ─── Error detail ───────────────────────────────────── */
+.errorDetail {
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.7rem;
+  text-align: center;
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  animation: slideUp 0.4s ease forwards;
+}
+
+/* ─── Spirit Values Ticker ───────────────────────────── */
+.tickerWrap {
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: linear-gradient(135deg, #1e3a5f 0%, #1a3252 100%);
+}
+
+.tickerLabel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tickerTrack {
+  overflow: hidden;
+  padding: 0.5rem 0;
+  mask-image: linear-gradient(90deg, transparent 0%, black 8%, black 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, black 8%, black 92%, transparent 100%);
+}
+
+.tickerScroll {
   display: flex;
   width: max-content;
-  animation: scrollSpirit 20s linear infinite;
+  animation: tickerScroll 30s linear infinite;
 }
 
-.spiritSet {
+.tickerScroll:hover {
+  animation-play-state: paused;
+}
+
+.tickerItem {
   display: flex;
-  gap: 1.5rem;
-  padding: 0 1.5rem;
-}
-
-.spiritItem {
-  display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.85rem;
-  background: var(--binus-light);
-  border-radius: var(--radius-full);
-  border: 1px solid rgba(0, 84, 166, 0.08);
+  gap: 0.3rem;
+  padding: 0 0.6rem;
   white-space: nowrap;
-  transition: transform 0.2s var(--ease-out);
+  flex-shrink: 0;
 }
 
-.spiritLetter {
-  font-size: 0.82rem;
+.tickerLetter {
   font-weight: 800;
-  color: var(--binus-blue);
-  min-width: 1rem;
-  text-align: center;
+  font-size: 0.8rem;
+  color: #60a5fa;
 }
 
-.spiritValue {
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  letter-spacing: 0.01em;
+.tickerWord {
+  font-weight: 600;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.9);
 }
 
-@keyframes scrollSpirit {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+.tickerDesc {
+  font-size: 0.6rem;
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
 }
 
-/* ─── Copyright Footer ───────────────────────────────── */
+.tickerDot {
+  color: rgba(255, 255, 255, 0.2);
+  font-size: 0.9rem;
+  margin-left: 0.3rem;
+}
+
+/* ─── Copyright ──────────────────────────────────────── */
 .copyright {
   text-align: center;
-  padding: 0.65rem 1rem;
-  background: var(--bg-card);
-  border-top: 1px solid var(--border-light);
-  color: var(--text-muted);
-  font-size: 0.68rem;
-  font-weight: 500;
+  font-size: 0.6rem;
+  color: #94a3b8;
+  margin: 0;
+  padding-top: 0.25rem;
   letter-spacing: 0.02em;
 }
