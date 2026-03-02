@@ -1,13 +1,10 @@
-const CACHE_NAME = 'binus-attendance-v2';
-const STATIC_CACHE = 'binus-static-v2';
+const CACHE_NAME = 'binus-attendance-v3';
+const STATIC_CACHE = 'binus-static-v3';
 
 const PRECACHE_URLS = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/apple-touch-icon.png',
 ];
 
 // Install — cache shell + static assets
@@ -29,7 +26,7 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch — network-first for API, cache-first for static assets
+// Fetch — network-first for API, stale-while-revalidate for static assets
 self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (event.request.method !== 'GET') return;
@@ -52,9 +49,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets & app shell: cache-first, fallback to network
-  if (url.pathname.match(/\.(js|css|png|jpg|jpeg|svg|woff2?|ttf|eot)$/) || 
-      url.pathname.startsWith('/assets/')) {
+  // Map tiles (openstreetmap): network-first so map always fresh
+  if (url.hostname.includes('tile.openstreetmap.org') || url.hostname.includes('tile.osm.org')) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Hashed assets (/assets/index-CceGdpPY.js): cache-first is safe
+  // because Vite appends a content hash — new deploys = new filenames
+  if (url.pathname.startsWith('/assets/') && url.pathname.match(/-[A-Za-z0-9_-]{8,}\./)) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
         if (cached) return cached;
@@ -86,7 +99,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Default: network-first
+  // Default: network-first (everything else, including non-hashed static files)
   event.respondWith(
     fetch(event.request)
       .then((response) => {
