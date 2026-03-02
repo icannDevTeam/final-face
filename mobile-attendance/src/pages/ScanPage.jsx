@@ -49,6 +49,11 @@ export default function ScanPage() {
 
     (async () => {
       try {
+        // Wait for Firebase anonymous auth before reading Firestore
+        setStatusMsg('Authenticating…');
+        const { authReady } = await import('../lib/firebase');
+        await authReady;
+
         setStatusMsg('Loading face detection models…');
         await loadModels((msg) => !cancelled && setStatusMsg(msg));
 
@@ -87,6 +92,12 @@ export default function ScanPage() {
 
   const startCamera = useCallback(async () => {
     try {
+      // Camera requires HTTPS (except localhost)
+      if (!navigator.mediaDevices) {
+        setPhase('error');
+        setStatusMsg('Camera requires HTTPS. Please access this page via a secure connection.');
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user',

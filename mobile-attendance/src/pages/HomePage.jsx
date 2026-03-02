@@ -23,8 +23,8 @@ function PulseRing({ status }) {
           key={i}
           className={`${styles.pulseRing} ${styles[status]}`}
           style={{
-            width: `${100 + i * 40}px`,
-            height: `${100 + i * 40}px`,
+            width: `${80 + i * 30}%`,
+            height: `${80 + i * 30}%`,
             opacity: 0.15 - i * 0.04,
             animationDelay: `${i * 0.4}s`,
           }}

@@ -8,6 +8,7 @@
   flex-direction: column;
   background: #000;
   color: #ffffff;
+  padding-top: env(safe-area-inset-top, 0);
 }
 
 /* ─── Header ─────────────────────────────────────────── */
@@ -366,6 +367,7 @@
 /* ─── Bottom Status Bar ──────────────────────────────── */
 .statusBar {
   padding: 0.875rem 1.25rem;
+  padding-bottom: max(0.875rem, env(safe-area-inset-bottom, 0.875rem));
   background: rgba(0, 40, 85, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
