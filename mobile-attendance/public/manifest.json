@@ -1,6 +1,6 @@
 {
-  "name": "BINUS School Attendance",
-  "short_name": "BINUS Attend",
+  "name": "BINUS Student Attendance",
+  "short_name": "BINUS Student",
   "description": "Face recognition attendance check-in for BINUS School Simprug",
   "start_url": "/",
   "scope": "/",
@@ -13,6 +13,8 @@
   "dir": "ltr",
   "prefer_related_applications": false,
   "icons": [
+    { "src": "/logo.jpe", "sizes": "192x192", "type": "image/jpeg" },
+    { "src": "/logo.jpe", "sizes": "512x512", "type": "image/jpeg", "purpose": "any maskable" },
     { "src": "/icon-72.png",  "sizes": "72x72",   "type": "image/png" },
     { "src": "/icon-96.png",  "sizes": "96x96",   "type": "image/png" },
     { "src": "/icon-128.png", "sizes": "128x128", "type": "image/png" },
