@@ -1,3 +1,7 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Scan Page — Modern Immersive Camera UI
+   ═══════════════════════════════════════════════════════════════════════ */
+
 .container {
   min-height: 100dvh;
   display: flex;
@@ -12,31 +16,34 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  background: linear-gradient(180deg, rgba(0, 84, 166, 0.95), rgba(0, 58, 117, 0.98));
+  background: rgba(0, 40, 85, 0.85);
   z-index: 10;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .backBtn {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   color: #ffffff;
-  padding: 0.45rem;
+  padding: 0.5rem;
   cursor: pointer;
   border-radius: var(--radius-sm, 0.5rem);
   transition: all 0.2s ease;
   backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .backBtn:hover {
-  background: rgba(255, 255, 255, 0.18);
-  transform: translateX(-1px);
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateX(-2px);
 }
 
 .backBtn:active {
-  transform: scale(0.95);
+  transform: scale(0.92);
 }
 
 .headerLogo {
@@ -46,7 +53,7 @@
   object-fit: contain;
   background: #ffffff;
   padding: 2px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .title {
@@ -62,7 +69,7 @@
   flex: 1;
   position: relative;
   overflow: hidden;
-  background: #0a0a0a;
+  background: #050505;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -98,50 +105,81 @@
 .scanFrame {
   width: 210px;
   height: 270px;
-  border: 2px dashed rgba(255, 255, 255, 0.2);
+  border: 2px dashed rgba(255, 255, 255, 0.18);
   border-radius: 50%;
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
 }
 
-/* Subtle corner guides */
+/* Triple ring guides */
 .scanFrame::before,
 .scanFrame::after {
   content: '';
   position: absolute;
-  width: 100%;
-  height: 100%;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .scanFrame::before {
-  inset: -8px;
+  inset: -10px;
 }
 
 .scanFrame::after {
-  inset: 8px;
+  inset: 10px;
 }
 
 .scanFrameActive {
-  border-color: rgba(0, 163, 224, 0.6);
+  border-color: rgba(0, 163, 224, 0.55);
   box-shadow:
-    0 0 30px rgba(0, 163, 224, 0.12),
-    inset 0 0 30px rgba(0, 163, 224, 0.05);
-  animation: pulseFrame 2s ease-in-out infinite;
+    0 0 40px rgba(0, 163, 224, 0.1),
+    inset 0 0 40px rgba(0, 163, 224, 0.04);
+  animation: pulseFrame 2.5s ease-in-out infinite;
 }
 
 .scanFrameActive::before {
-  border-color: rgba(0, 163, 224, 0.15);
+  border-color: rgba(0, 163, 224, 0.12);
+  animation: ringExpand 2.5s ease-in-out infinite;
 }
 
 .scanFrameActive::after {
-  border-color: rgba(0, 163, 224, 0.1);
+  border-color: rgba(0, 163, 224, 0.08);
 }
 
 @keyframes pulseFrame {
-  0%, 100% { box-shadow: 0 0 20px rgba(0, 163, 224, 0.08), inset 0 0 20px rgba(0, 163, 224, 0.03); }
-  50%      { box-shadow: 0 0 40px rgba(0, 163, 224, 0.2), inset 0 0 40px rgba(0, 163, 224, 0.08); }
+  0%, 100% {
+    box-shadow: 0 0 24px rgba(0, 163, 224, 0.06), inset 0 0 24px rgba(0, 163, 224, 0.02);
+    border-color: rgba(0, 163, 224, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 48px rgba(0, 163, 224, 0.18), inset 0 0 48px rgba(0, 163, 224, 0.06);
+    border-color: rgba(0, 163, 224, 0.7);
+  }
+}
+
+@keyframes ringExpand {
+  0%, 100% { inset: -10px; opacity: 0.8; }
+  50%      { inset: -16px; opacity: 0.3; }
+}
+
+/* ─── Scanning indicator line ────────────────────────── */
+.scanLine {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 200px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(0, 163, 224, 0.6), transparent);
+  border-radius: 2px;
+  animation: scanMove 2.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes scanMove {
+  0%, 100% { top: calc(50% - 135px); opacity: 0; }
+  10%      { opacity: 1; }
+  90%      { opacity: 1; }
+  100%     { top: calc(50% + 135px); opacity: 0; }
 }
 
 /* ─── Match Overlay ──────────────────────────────────── */
@@ -157,21 +195,21 @@
 }
 
 .matchOverlay {
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .doneOverlay {
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .errorOverlay {
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   flex-direction: column;
   gap: 1.25rem;
   color: var(--error, #ef4444);
@@ -182,23 +220,44 @@
 .matchCard,
 .doneCard {
   text-align: center;
-  background: #ffffff;
-  border: none;
-  border-radius: var(--radius-xl, 1.5rem);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-2xl, 2rem);
   padding: 2rem 2.5rem;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
-  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  animation: cardReveal 0.5s cubic-bezier(0.16, 1, 0.3, 1);
   color: var(--text-primary, #0F1D35);
   max-width: 320px;
   width: 85%;
 }
 
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(30px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+@keyframes cardReveal {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.94);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
 }
 
-.matchIcon { color: var(--binus-accent, #00A3E0); }
+.matchIcon {
+  color: var(--binus-accent, #00A3E0);
+  animation: iconBounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
+}
+
+@keyframes iconBounce {
+  from { transform: scale(0); }
+  to   { transform: scale(1); }
+}
 
 .matchCard h3 {
   font-size: 1.25rem;
@@ -237,7 +296,10 @@
 }
 
 /* ─── Done Card ──────────────────────────────────────── */
-.doneIcon { color: var(--success, #10B981); }
+.doneIcon {
+  color: var(--success, #10B981);
+  animation: iconBounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
+}
 
 .doneCard h3 {
   color: var(--success, #10B981);
@@ -274,33 +336,39 @@
 }
 
 /* ─── Error ──────────────────────────────────────────── */
+.errorIcon {
+  animation: iconBounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
+}
+
 .retryBtn {
-  padding: 0.7rem 1.75rem;
+  padding: 0.75rem 2rem;
   border: none;
   background: var(--binus-gradient, linear-gradient(135deg, #0054A6 0%, #00A3E0 100%));
   color: #ffffff;
-  border-radius: var(--radius-md, 0.875rem);
+  border-radius: var(--radius-full, 9999px);
   font-size: 0.88rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.25s ease;
-  box-shadow: 0 4px 16px rgba(0, 84, 166, 0.3);
+  box-shadow: 0 4px 20px rgba(0, 84, 166, 0.35);
   letter-spacing: 0.01em;
 }
 
 .retryBtn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 24px rgba(0, 84, 166, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(0, 84, 166, 0.45);
 }
 
 .retryBtn:active {
-  transform: scale(0.97);
+  transform: scale(0.96);
 }
 
 /* ─── Bottom Status Bar ──────────────────────────────── */
 .statusBar {
-  padding: 1rem 1.25rem;
-  background: linear-gradient(180deg, rgba(0, 58, 117, 0.98), rgba(0, 84, 166, 0.95));
+  padding: 0.875rem 1.25rem;
+  background: rgba(0, 40, 85, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   z-index: 10;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
@@ -309,8 +377,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.45rem;
-  color: rgba(255, 255, 255, 0.8);
+  gap: 0.5rem;
+  color: rgba(255, 255, 255, 0.75);
   font-size: 0.82rem;
   margin: 0;
   font-weight: 500;
@@ -338,9 +406,9 @@
 /* ─── Copyright ──────────────────────────────────────── */
 .scanCopyright {
   text-align: center;
-  color: rgba(255, 255, 255, 0.3);
-  font-size: 0.62rem;
+  color: rgba(255, 255, 255, 0.25);
+  font-size: 0.6rem;
   font-weight: 500;
   letter-spacing: 0.02em;
-  margin: 0.4rem 0 0;
+  margin: 0.35rem 0 0;
 }

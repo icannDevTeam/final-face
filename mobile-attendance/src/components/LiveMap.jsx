@@ -67,7 +67,6 @@ function MapAutoCenter({ userPos, campusPos }) {
   useEffect(() => {
     if (!userPos) return;
     if (!hasZoomed.current) {
-      // Fit both markers on first position fix
       const bounds = L.latLngBounds([
         [campusPos.lat, campusPos.lng],
         [userPos.lat, userPos.lng],
@@ -83,35 +82,30 @@ function MapAutoCenter({ userPos, campusPos }) {
 }
 
 /**
- * LiveMap — renders a Leaflet map showing:
- *  • Campus center pin + geofence circle
- *  • Student's live GPS position
- *
- * Props:
- *  campusLat, campusLng  — campus centre
- *  campusRadius          — geofence radius in metres
- *  userLat, userLng      — student's current position (null when unknown)
- *  inRange               — whether the student is inside the geofence
+ * LiveMap — renders a Leaflet map with campus geofence + student position.
  */
-export default function LiveMap({
-  campusLat,
-  campusLng,
-  campusRadius,
-  userLat,
-  userLng,
-  inRange,
-}) {
-  const campusPos = { lat: campusLat, lng: campusLng };
-  const userPos = userLat != null && userLng != null ? { lat: userLat, lng: userLng } : null;
+export default function LiveMap({ proximity }) {
+  const campus = {
+    lat: proximity?.campusLat ?? -6.2307,
+    lng: proximity?.campusLng ?? 106.7865,
+    radius: proximity?.campusRadius ?? 500,
+  };
+  const userPos =
+    proximity?.lat != null && proximity?.lng != null
+      ? { lat: proximity.lat, lng: proximity.lng }
+      : null;
+  const inRange = proximity?.inRange ?? false;
 
   return (
     <div style={{
-      borderRadius: 'var(--radius-lg, 1.25rem)',
+      borderRadius: 'var(--radius-2xl, 1.25rem)',
       overflow: 'hidden',
-      boxShadow: 'var(--shadow-md, 0 4px 16px rgba(0,60,120,.07))',
-      border: '1px solid var(--border-light, #F1F5F9)',
+      boxShadow: 'var(--glass-shadow, 0 4px 16px rgba(0,60,120,.07))',
+      border: '1px solid var(--glass-border, #F1F5F9)',
       margin: '0 1rem 1rem',
-      background: '#fff',
+      background: 'var(--glass-bg, #fff)',
+      backdropFilter: 'blur(12px)',
+      WebkitBackdropFilter: 'blur(12px)',
     }}>
       {/* Map label */}
       <div style={{
@@ -119,17 +113,19 @@ export default function LiveMap({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '0.6rem 0.9rem',
-        borderBottom: '1px solid var(--border-light, #F1F5F9)',
+        borderBottom: '1px solid var(--glass-border, #F1F5F9)',
         fontSize: '0.72rem',
         fontWeight: 600,
         color: 'var(--text-secondary, #5A6B82)',
         letterSpacing: '0.04em',
         textTransform: 'uppercase',
       }}>
-        <span>📍 Live Location</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <span>📍</span> Live Location
+        </span>
         {userPos && (
           <span style={{
-            fontWeight: 500,
+            fontWeight: 600,
             fontSize: '0.7rem',
             color: inRange ? 'var(--success-dark, #047857)' : 'var(--warning-dark, #B45309)',
             background: inRange ? 'var(--success-bg, #ECFDF5)' : 'var(--warning-bg, #FFFBEB)',
@@ -137,13 +133,14 @@ export default function LiveMap({
             borderRadius: 'var(--radius-full, 9999px)',
             textTransform: 'none',
             letterSpacing: '0',
+            border: `1px solid ${inRange ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)'}`,
           }}>
             {inRange ? '● In range' : '○ Out of range'}
           </span>
         )}
       </div>
       <MapContainer
-        center={[campusLat, campusLng]}
+        center={[campus.lat, campus.lng]}
         zoom={16}
         scrollWheelZoom={false}
         dragging={true}
@@ -151,14 +148,11 @@ export default function LiveMap({
         attributionControl={false}
         style={{ height: '200px', width: '100%' }}
       >
-        <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
-        {/* Geofence radius circle */}
         <Circle
-          center={[campusLat, campusLng]}
-          radius={campusRadius}
+          center={[campus.lat, campus.lng]}
+          radius={campus.radius}
           pathOptions={{
             color: inRange ? '#10B981' : '#F59E0B',
             fillColor: inRange ? '#ECFDF5' : '#FFFBEB',
@@ -168,15 +162,13 @@ export default function LiveMap({
           }}
         />
 
-        {/* Campus centre pin */}
-        <Marker position={[campusLat, campusLng]} icon={campusIcon} />
+        <Marker position={[campus.lat, campus.lng]} icon={campusIcon} />
 
-        {/* Student live position */}
         {userPos && (
           <Marker position={[userPos.lat, userPos.lng]} icon={userIcon} />
         )}
 
-        <MapAutoCenter userPos={userPos} campusPos={campusPos} />
+        <MapAutoCenter userPos={userPos} campusPos={campus} />
       </MapContainer>
     </div>
   );
