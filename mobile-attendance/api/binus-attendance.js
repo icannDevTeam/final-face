@@ -39,8 +39,10 @@ export default async function handler(req, res) {
   // CORS — restrict to known origins in production
   const allowedOrigins = [
     process.env.CORS_ORIGIN,                    // explicit env override
-    'https://mobile-attendance.vercel.app',      // production
+    'https://final-face-ten.vercel.app',         // production
+    'https://mobile-attendance.vercel.app',      // legacy
     'http://localhost:5173',                      // Vite dev
+    'http://localhost:5174',                      // Vite dev alt port
     'http://localhost:4173',                      // Vite preview
   ].filter(Boolean);
   const origin = req.headers.origin || '';
