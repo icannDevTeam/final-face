@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  loadModels,
+  loadDescriptors,
   detectAndMatch,
   detectFace,
   isModelsLoaded,
@@ -35,9 +37,42 @@ export default function ScanPage() {
   const [matchResult, setMatchResult] = useState(null);
   const [clockResult, setClockResult] = useState(null);
   const [faceDetected, setFaceDetected] = useState(false);
+  const [modelsReady, setModelsReady] = useState(false);
 
   // Streak tracking
   const streakRef = useRef({ id: null, count: 0 });
+
+  // ─── Load face-api models + descriptors ────────────────────
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setStatusMsg('Loading face detection models…');
+        await loadModels((msg) => !cancelled && setStatusMsg(msg));
+
+        setStatusMsg('Loading face database…');
+        const count = await loadDescriptors((msg) => !cancelled && setStatusMsg(msg));
+
+        if (!cancelled) {
+          if (count === 0) {
+            setPhase('error');
+            setStatusMsg('No face descriptors found in database. Please enroll students first.');
+          } else {
+            setModelsReady(true);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setPhase('error');
+          setStatusMsg(`Model load failed: ${err.message}`);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, []);
 
   // ─── Camera setup ──────────────────────────────────────────
 
@@ -203,9 +238,11 @@ export default function ScanPage() {
   // ─── Lifecycle ─────────────────────────────────────────────
 
   useEffect(() => {
-    startCamera();
+    if (modelsReady) {
+      startCamera();
+    }
     return () => stopCamera();
-  }, [startCamera, stopCamera]);
+  }, [modelsReady, startCamera, stopCamera]);
 
   // Start scanning & overlay once video is playing
   useEffect(() => {
