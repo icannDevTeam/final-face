@@ -1,8 +1,13 @@
 /**
  * API client for BINUS School & Firebase interactions.
- * 
- * In production, these would call a backend proxy to protect API keys.
- * For the prototype, we call Firebase directly from the client.
+ *
+ * CACHING STRATEGY:
+ *  - Student lookups:    memory + localStorage (1 hr TTL)
+ *  - Student metadata:   memory + localStorage (1 hr TTL)
+ *  - Today's check-in:   memory (12 hr TTL) — reset on new day
+ *  - Attendance summary:  memory (30 sec TTL) — lightweight refresh
+ *
+ * This avoids redundant Firestore reads on every navigation / check-in.
  */
 import { db } from './firebase';
 import {
@@ -16,6 +21,7 @@ import {
   orderBy,
   serverTimestamp,
 } from 'firebase/firestore';
+import { memGet, memSet, lsGet, lsSet, TTL } from './cache';
 
 // ─── WIB helpers ──────────────────────────────────────────────────────
 function getWIBNow() {
@@ -40,20 +46,41 @@ function getWIBTimestamp() {
 /**
  * Look up a student from the Firestore `students` collection.
  * Returns student metadata if found, null otherwise.
+ * Cached in memory + localStorage (1 hr TTL).
  */
 export async function lookupStudent(studentId) {
+  const cacheKey = `student_${studentId}`;
+
+  // ── Memory cache (instant) ────────────────────────────────────────
+  const memCached = memGet(cacheKey, TTL.STUDENT);
+  if (memCached) return memCached;
+
+  // ── localStorage cache (survives reload) ──────────────────────────
+  const lsCached = lsGet(cacheKey, TTL.STUDENT);
+  if (lsCached) {
+    memSet(cacheKey, lsCached); // promote to memory
+    return lsCached;
+  }
+
+  // ── Firestore fetch ───────────────────────────────────────────────
   try {
     const docRef = doc(db, 'students', String(studentId));
     const snap = await getDoc(docRef);
     if (snap.exists()) {
-      return { id: snap.id, ...snap.data() };
+      const result = { id: snap.id, ...snap.data() };
+      memSet(cacheKey, result);
+      lsSet(cacheKey, result);
+      return result;
     }
 
     // Also check student_metadata collection (keyed by employeeNo = studentId)
     const metaRef = doc(db, 'student_metadata', String(studentId));
     const metaSnap = await getDoc(metaRef);
     if (metaSnap.exists()) {
-      return { id: metaSnap.id, ...metaSnap.data() };
+      const result = { id: metaSnap.id, ...metaSnap.data() };
+      memSet(cacheKey, result);
+      lsSet(cacheKey, result);
+      return result;
     }
 
     return null;
@@ -80,6 +107,7 @@ export async function checkIn(studentId, studentName, location, metadata = {}) {
   const time = getWIBTime();
 
   // ── Dedup: check for existing record from ANY source ──────────────
+  // Uses memory cache first to avoid Firestore hit on repeated scans
   const existing = await getExistingCheckIn(studentId);
   if (existing) {
     return {
@@ -119,6 +147,11 @@ export async function checkIn(studentId, studentName, location, metadata = {}) {
     const dayRef = doc(db, 'attendance', date);
     await setDoc(dayRef, { lastUpdated: new Date().toISOString() }, { merge: true });
 
+    // ── Cache the check-in so we skip Firestore on subsequent scans ──
+    const checkinKey = `checkin_${date}_${studentId}`;
+    memSet(checkinKey, record);
+    lsSet(checkinKey, record);
+
     // ── Also push to BINUS School API (best-effort, non-blocking) ───
     syncToBinusApi(studentId).catch((err) =>
       console.warn('BINUS API sync (non-critical):', err.message)
@@ -136,19 +169,35 @@ export async function checkIn(studentId, studentName, location, metadata = {}) {
 /**
  * Look up student_metadata from Firestore and push attendance to BINUS API
  * via the Vercel serverless proxy at /api/binus-attendance.
+ * Metadata is cached in memory + localStorage (1 hr TTL).
  */
 async function syncToBinusApi(studentId) {
   try {
-    // Read BINUS IDs from student_metadata collection
-    const metaRef = doc(db, 'student_metadata', String(studentId));
-    const metaSnap = await getDoc(metaRef);
+    // ── Cached metadata lookup ──────────────────────────────────────
+    const metaCacheKey = `meta_${studentId}`;
+    let meta = memGet(metaCacheKey, TTL.METADATA);
 
-    if (!metaSnap.exists()) {
-      console.warn(`No student_metadata for ${studentId} — skipping BINUS API`);
-      return;
+    if (!meta) {
+      meta = lsGet(metaCacheKey, TTL.METADATA);
+      if (meta) {
+        memSet(metaCacheKey, meta); // promote to memory
+      }
     }
 
-    const meta = metaSnap.data();
+    if (!meta) {
+      const metaRef = doc(db, 'student_metadata', String(studentId));
+      const metaSnap = await getDoc(metaRef);
+
+      if (!metaSnap.exists()) {
+        console.warn(`No student_metadata for ${studentId} — skipping BINUS API`);
+        return;
+      }
+
+      meta = metaSnap.data();
+      memSet(metaCacheKey, meta);
+      lsSet(metaCacheKey, meta);
+    }
+
     const idStudent = meta.idStudent || meta.IdStudent || '';
     const idBinusian = meta.idBinusian || meta.IdBinusian || '';
 
@@ -178,14 +227,32 @@ async function syncToBinusApi(studentId) {
 
 /**
  * Check if a student has already checked in today.
+ * Uses memory + localStorage cache to avoid Firestore hit on repeated scans.
  */
 export async function getExistingCheckIn(studentId) {
   const date = getWIBDate();
+  const cacheKey = `checkin_${date}_${studentId}`;
+
+  // ── Memory cache ──────────────────────────────────────────────────
+  const memCached = memGet(cacheKey, TTL.CHECKIN);
+  if (memCached) return memCached;
+
+  // ── localStorage cache ────────────────────────────────────────────
+  const lsCached = lsGet(cacheKey, TTL.CHECKIN);
+  if (lsCached) {
+    memSet(cacheKey, lsCached);
+    return lsCached;
+  }
+
+  // ── Firestore fetch ───────────────────────────────────────────────
   try {
     const docRef = doc(db, 'attendance', date, 'records', String(studentId));
     const snap = await getDoc(docRef);
     if (snap.exists()) {
-      return snap.data();
+      const data = snap.data();
+      memSet(cacheKey, data);
+      lsSet(cacheKey, data);
+      return data;
     }
     return null;
   } catch {
@@ -195,9 +262,16 @@ export async function getExistingCheckIn(studentId) {
 
 /**
  * Get today's attendance summary.
+ * Cached in memory for 30 seconds to avoid rapid re-fetches.
  */
 export async function getTodaySummary() {
   const date = getWIBDate();
+  const cacheKey = `summary_${date}`;
+
+  // ── Memory cache (30 sec) ─────────────────────────────────────────
+  const cached = memGet(cacheKey, 30_000);
+  if (cached) return cached;
+
   try {
     const colRef = collection(db, 'attendance', date, 'records');
     const q = query(colRef, orderBy('timestamp', 'asc'));
@@ -206,13 +280,16 @@ export async function getTodaySummary() {
     const records = [];
     snap.forEach((doc) => records.push({ id: doc.id, ...doc.data() }));
 
-    return {
+    const result = {
       date,
       total: records.length,
       present: records.filter((r) => !r.late).length,
       late: records.filter((r) => r.late).length,
       records,
     };
+
+    memSet(cacheKey, result);
+    return result;
   } catch {
     return { date, total: 0, present: 0, late: 0, records: [] };
   }

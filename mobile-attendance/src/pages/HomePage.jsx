@@ -213,41 +213,46 @@ export default function HomePage() {
     return () => clearInterval(id);
   }, []);
 
-  // ── Initial proximity check ────────────────────────────
+  // ── Initial proximity check + continuous watch ──────────
+  // watchProximity fires immediately on first position, so we
+  // combine both into one effect to avoid double GPS reads.
   useEffect(() => {
-    let cancelled = false;
+    let initialDone = false;
 
-    (async () => {
-      try {
-        const data = await checkProximity();
-        if (cancelled) return;
-        setGpsData(data);
-        setStatus(data.inRange ? STATUS.IN : STATUS.OUT);
-        setGpsError(null);
-      } catch (err) {
-        if (cancelled) return;
-        setGpsError(err.message);
-        setStatus(STATUS.ERROR);
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, []);
-
-  // ── Continuous GPS watch ───────────────────────────────
-  useEffect(() => {
     const stop = watchProximity(
       (data) => {
         setGpsData(data);
         setStatus(data.inRange ? STATUS.IN : STATUS.OUT);
         setGpsError(null);
+        initialDone = true;
       },
       (errMsg) => {
         setGpsError(errMsg);
+        if (!initialDone) setStatus(STATUS.ERROR);
       }
     );
     cleanupRef.current = stop;
-    return () => stop();
+
+    // Fallback: if watchProximity hasn't fired in 5s, do a one-shot
+    const fallback = setTimeout(() => {
+      if (!initialDone) {
+        checkProximity()
+          .then((data) => {
+            setGpsData(data);
+            setStatus(data.inRange ? STATUS.IN : STATUS.OUT);
+            setGpsError(null);
+          })
+          .catch((err) => {
+            setGpsError(err.message);
+            setStatus(STATUS.ERROR);
+          });
+      }
+    }, 5000);
+
+    return () => {
+      stop();
+      clearTimeout(fallback);
+    };
   }, []);
 
   // ── Lazy-load LiveMap when map expands ─────────────────

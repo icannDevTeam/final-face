@@ -8,12 +8,19 @@
  *
  * Face descriptors (128-d Float32Array) are stored in Firestore:
  *   face_descriptors/{studentId} → { name, homeroom, grade, descriptor: number[] }
+ *
+ * CACHING: Descriptors are cached in IndexedDB (30 min TTL) to avoid
+ * re-reading every Firestore doc on each ScanPage mount. Models are
+ * cached in memory (loaded once per session) + SW cache-first.
  */
 import * as faceapi from 'face-api.js';
 import { db } from './firebase';
 import { collection, getDocs } from 'firebase/firestore';
+import { idbGet, idbSet, memGet, memSet, TTL } from './cache';
 
 const MODEL_URL = '/models';
+const DESCRIPTORS_CACHE_KEY = 'face_descriptors';
+
 let modelsLoaded = false;
 let labeledDescriptors = []; // array of faceapi.LabeledFaceDescriptors
 
@@ -39,15 +46,61 @@ export function isModelsLoaded() {
   return modelsLoaded;
 }
 
-// ─── Descriptor database ─────────────────────────────────────────────
+// ─── Descriptor database (with IndexedDB caching) ────────────────────
+
+/**
+ * Serialize labeled descriptors to a plain array for IndexedDB storage.
+ * Float32Arrays → regular arrays so they survive structured clone.
+ */
+function serializeDescriptors(descriptors) {
+  return descriptors.map((ld) => ({
+    label: ld.label,
+    descriptors: ld.descriptors.map((d) => Array.from(d)),
+  }));
+}
+
+/**
+ * Deserialize cached data back into faceapi.LabeledFaceDescriptors.
+ */
+function deserializeDescriptors(cached) {
+  return cached.map((item) =>
+    new faceapi.LabeledFaceDescriptors(
+      item.label,
+      item.descriptors.map((arr) => new Float32Array(arr))
+    )
+  );
+}
 
 /**
  * Load pre-computed face descriptors from Firestore.
+ * Uses IndexedDB cache (30 min TTL) to avoid redundant Firestore reads.
+ *
  * Each doc in `face_descriptors` has:
- *   { name, homeroom, grade, descriptorCount, descriptor_0: [...], descriptor_1: [...], ... }
+ *   { name, homeroom, grade, descriptorCount, descriptor_0: [...], ... }
  */
 export async function loadDescriptors(onProgress) {
+  // ── Check in-memory first (instant if already loaded this session) ──
+  if (labeledDescriptors.length > 0) {
+    onProgress?.(`Loaded ${labeledDescriptors.length} students (memory)`);
+    return labeledDescriptors.length;
+  }
+
+  // ── Check IndexedDB cache (survives page reloads) ──────────────────
   onProgress?.('Loading face database…');
+
+  try {
+    const cached = await idbGet(DESCRIPTORS_CACHE_KEY, TTL.DESCRIPTORS);
+    if (cached && cached.length > 0) {
+      labeledDescriptors = deserializeDescriptors(cached);
+      onProgress?.(`Loaded ${labeledDescriptors.length} students (cached)`);
+      return labeledDescriptors.length;
+    }
+  } catch {
+    // Cache read failed — fall through to Firestore
+  }
+
+  // ── Fetch fresh from Firestore ─────────────────────────────────────
+  onProgress?.('Fetching face database from server…');
 
   const snap = await getDocs(collection(db, 'face_descriptors'));
   labeledDescriptors = [];
@@ -57,7 +110,6 @@ export async function loadDescriptors(onProgress) {
     const count = data.descriptorCount || 0;
     if (count === 0) return;
 
-    // Reconstruct descriptor arrays from descriptor_0, descriptor_1, … fields
     const descs = [];
     for (let i = 0; i < count; i++) {
       const arr = data[`descriptor_${i}`];
@@ -70,15 +122,29 @@ export async function loadDescriptors(onProgress) {
 
     labeledDescriptors.push(
       new faceapi.LabeledFaceDescriptors(
-        // Label format: "studentId|name|homeroom|grade"
         `${doc.id}|${data.name || ''}|${data.homeroom || ''}|${data.grade || ''}`,
         descs
       )
     );
   });
 
+  // ── Write to IndexedDB for next time ──────────────────────────────
+  if (labeledDescriptors.length > 0) {
+    idbSet(DESCRIPTORS_CACHE_KEY, serializeDescriptors(labeledDescriptors)).catch(() => {});
+  }
+
   onProgress?.(`Loaded ${labeledDescriptors.length} students`);
   return labeledDescriptors.length;
+}
+
+/**
+ * Force-refresh descriptors from Firestore (bypasses cache).
+ * Call when new students are enrolled.
+ */
+export async function refreshDescriptors(onProgress) {
+  labeledDescriptors = [];
+  idbSet(DESCRIPTORS_CACHE_KEY, null).catch(() => {});
+  return loadDescriptors(onProgress);
 }
 
 export function getLoadedCount() {
