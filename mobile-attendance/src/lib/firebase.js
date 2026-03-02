@@ -8,12 +8,13 @@ import { getFirestore } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
+  apiKey: 'AIzaSyClDQe4e2NpfVw4nvLG10vzK8wmdGCHJwk',
   authDomain: 'facial-attendance-binus.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'facial-attendance-binus',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'facial-attendance-binus.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
+  projectId: 'facial-attendance-binus',
+  storageBucket: 'facial-attendance-binus.firebasestorage.app',
+  messagingSenderId: '866005352235',
+  appId: '1:866005352235:web:90f5c63b84892bdf774f6e',
+  measurementId: 'G-RBKGEX9RHF',
 };
 
 const app = initializeApp(firebaseConfig);
