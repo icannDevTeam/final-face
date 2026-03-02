@@ -1,5 +1,6 @@
-const CACHE_NAME = 'binus-attendance-v3';
-const STATIC_CACHE = 'binus-static-v3';
+const CACHE_NAME = 'binus-attendance-v4';
+const STATIC_CACHE = 'binus-static-v4';
+const MODEL_CACHE = 'binus-models-v1';   // ML models rarely change — long-lived
 
 const PRECACHE_URLS = [
   '/',
@@ -7,17 +8,32 @@ const PRECACHE_URLS = [
   '/manifest.json',
 ];
 
-// Install — cache shell + static assets
+// face-api.js model files — cache-first, never expire
+const MODEL_FILES = [
+  '/models/ssd_mobilenetv1_model-weights_manifest.json',
+  '/models/ssd_mobilenetv1_model-shard1',
+  '/models/ssd_mobilenetv1_model-shard2',
+  '/models/face_landmark_68_model-weights_manifest.json',
+  '/models/face_landmark_68_model-shard1',
+  '/models/face_recognition_model-weights_manifest.json',
+  '/models/face_recognition_model-shard1',
+  '/models/face_recognition_model-shard2',
+];
+
+// Install — cache shell + precache ML models
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => cache.addAll(PRECACHE_URLS))
+    Promise.all([
+      caches.open(STATIC_CACHE).then((cache) => cache.addAll(PRECACHE_URLS)),
+      caches.open(MODEL_CACHE).then((cache) => cache.addAll(MODEL_FILES)),
+    ])
   );
   self.skipWaiting();
 });
 
 // Activate — clean old caches
 self.addEventListener('activate', (event) => {
-  const keepCaches = [CACHE_NAME, STATIC_CACHE];
+  const keepCaches = [CACHE_NAME, STATIC_CACHE, MODEL_CACHE];
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => !keepCaches.includes(k)).map((k) => caches.delete(k)))
@@ -49,18 +65,37 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Map tiles (openstreetmap): network-first so map always fresh
+  // ML model files: cache-first — these are large binary blobs that never change
+  if (url.pathname.startsWith('/models/')) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(event.request).then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(MODEL_CACHE).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // Map tiles (openstreetmap): stale-while-revalidate — show cached fast, update in bg
   if (url.hostname.includes('tile.openstreetmap.org') || url.hostname.includes('tile.osm.org')) {
     event.respondWith(
-      fetch(event.request)
-        .then((response) => {
+      caches.match(event.request).then((cached) => {
+        const fetchPromise = fetch(event.request).then((response) => {
           if (response.ok) {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
           }
           return response;
-        })
-        .catch(() => caches.match(event.request))
+        }).catch(() => cached);
+
+        return cached || fetchPromise;
+      })
     );
     return;
   }

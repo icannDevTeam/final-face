@@ -4,7 +4,11 @@
  * Uses the Haversine formula to calculate distance between student
  * and the BINUS School Simprug campus. Students must be within the
  * configured radius to clock in.
+ *
+ * CACHING: checkProximity() caches its result for 5 seconds to avoid
+ * redundant GPS reads when components mount/re-render quickly.
  */
+import { memGet, memSet, TTL } from './cache';
 
 // ─── Campus coordinates (BINUS School Simprug) ───────────────────────
 const CAMPUS_LAT = parseFloat(import.meta.env.VITE_CAMPUS_LAT) || -6.2307;
@@ -45,8 +49,13 @@ function getCurrentPosition(options = {}) {
 /**
  * Check if the user is within campus proximity.
  * Returns { inRange, distance, accuracy, lat, lng, campusRadius }
+ * Cached for 5 seconds to prevent redundant GPS reads on quick re-renders.
  */
 export async function checkProximity() {
+  // ── Short-lived cache to avoid rapid-fire GPS reads ───────────────
+  const cached = memGet('proximity', TTL.PROXIMITY);
+  if (cached) return cached;
+
   try {
     const pos = await getCurrentPosition();
     const { latitude: lat, longitude: lng, accuracy } = pos.coords;
@@ -58,7 +67,7 @@ export async function checkProximity() {
 
     const distance = haversineMetres(lat, lng, CAMPUS_LAT, CAMPUS_LNG);
 
-    return {
+    const result = {
       inRange: distance <= CAMPUS_RADIUS_M,
       distance: Math.round(distance),
       accuracy: Math.round(accuracy),
@@ -66,6 +75,9 @@ export async function checkProximity() {
       lng,
       campusRadius: CAMPUS_RADIUS_M,
     };
+
+    memSet('proximity', result);
+    return result;
   } catch (err) {
     // Map GeolocationPositionError codes to user-friendly messages
     const messages = {
