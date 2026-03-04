@@ -43,6 +43,10 @@ export default function ScanPage() {
   // Streak tracking
   const streakRef = useRef({ id: null, count: 0 });
 
+  // Ref to hold performClockIn so runRecognitionLoop can access it
+  // without a temporal dead zone / circular useCallback dependency
+  const clockInRef = useRef(null);
+
   // ─── Load face-api models + descriptors ────────────────────
 
   useEffect(() => {
@@ -204,7 +208,7 @@ export default function ScanPage() {
             setStatusMsg(`Identified: ${result.student.name}`);
 
             // Auto clock-in after brief delay
-            setTimeout(() => performClockIn(result), CONFIRM_DELAY);
+            setTimeout(() => clockInRef.current?.(result), CONFIRM_DELAY);
           }
         } else {
           // Reset streak on miss
@@ -214,7 +218,7 @@ export default function ScanPage() {
         // Ignore transient errors
       }
     }, SCAN_INTERVAL);
-  }, [performClockIn]);
+  }, []);
 
   // ─── Clock in ──────────────────────────────────────────────
 
@@ -260,6 +264,9 @@ export default function ScanPage() {
       setStatusMsg(err.message);
     }
   }, []);
+
+  // Keep the ref in sync so runRecognitionLoop always calls the latest version
+  useEffect(() => { clockInRef.current = performClockIn; }, [performClockIn]);
 
   // ─── Lifecycle ─────────────────────────────────────────────
 
