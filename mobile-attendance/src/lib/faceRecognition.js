@@ -16,7 +16,7 @@
 import * as faceapi from 'face-api.js';
 import { db } from './firebase';
 import { collection, getDocs } from 'firebase/firestore';
-import { idbGet, idbSet, memGet, memSet, TTL } from './cache';
+import { idbGet, idbSet, TTL } from './cache';
 
 const MODEL_URL = '/models';
 const DESCRIPTORS_CACHE_KEY = 'face_descriptors';

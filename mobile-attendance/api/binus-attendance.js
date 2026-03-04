@@ -11,6 +11,8 @@
  *   BINUS_USER_ACTION — UserAction field (default: "TEACHER7")
  */
 
+import process from 'node:process';
+
 // BINUS API only serves on HTTP port 80 (HTTPS port 443 returns 404)
 const BINUS_BASE = 'http://binusian.ws';
 const BINUS_AUTH_URL = `${BINUS_BASE}/binusschool/auth/token`;

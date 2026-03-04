@@ -68,8 +68,9 @@ function FingerprintIcon({ status }) {
 
 // ─── Static map preview ──────────────────────────────────────────────
 
-function MapPreview({ status, distance, accuracy }) {
+function MapPreview({ status, distance, accuracy, geofence, campusName }) {
   const isOut = status === STATUS.OUT || status === STATUS.ERROR;
+  const safeCampusName = campusName || 'Campus';
 
   const circleColor = isOut ? 'rgba(153,27,27,0.2)' : 'rgba(0,84,166,0.2)';
   const strokeColor = isOut ? '#991B1B' : '#0054A6';
@@ -80,6 +81,9 @@ function MapPreview({ status, distance, accuracy }) {
       ? `📍 ${(distance / 1000).toFixed(1)} km away`
       : `📍 ${distance}m away`
     : '📍 Measuring…';
+  const zoneText = geofence === 'polygon'
+    ? (isOut ? `Outside ${safeCampusName} zone` : `${safeCampusName} zone locked`)
+    : null;
 
   return (
     <div className={styles.mapPreview}>
@@ -142,7 +146,9 @@ function MapPreview({ status, distance, accuracy }) {
 
       {/* Distance label */}
       <div className={`${styles.distLabel} ${isOut ? styles.out : styles.in}`}>
-        {!isOut ? '📍 Within range' : distText}
+        {geofence === 'polygon'
+            ? zoneText || distText
+          : (!isOut ? '📍 Within range' : distText)}
       </div>
 
       {/* Accuracy badge */}
@@ -300,6 +306,9 @@ export default function HomePage() {
   const isOut      = status === STATUS.OUT;
   const isIn       = status === STATUS.IN;
 
+  const geofenceType = gpsData?.geofence || campusCfg.geofence;
+  const campusName = gpsData?.campusName || campusCfg.name;
+
   const distDisplay = gpsData
     ? gpsData.distance >= 1000
       ? `${(gpsData.distance / 1000).toFixed(1)} km`
@@ -311,6 +320,9 @@ export default function HomePage() {
       ? `${(gpsData.campusRadius / 1000).toFixed(1)} km`
       : `${gpsData.campusRadius} m`
     : `${campusCfg.radius} m`;
+
+  const zoneLabel = geofenceType === 'polygon' ? 'Attendance Zone' : 'Allowed Radius';
+  const zoneValue = geofenceType === 'polygon' ? campusName : radiusDisplay;
 
   const accDisplay = gpsData ? `±${gpsData.accuracy} m` : '—';
 
@@ -391,12 +403,12 @@ export default function HomePage() {
               <div className={styles.statBox}>
                 <div className={styles.statIcon}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10" strokeDasharray="4 2" />
-                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4Z" />
+                    <circle cx="12" cy="11" r="2" />
                   </svg>
                 </div>
-                <div className={styles.statValue}>{radiusDisplay}</div>
-                <div className={styles.statLabel}>Allowed Radius</div>
+                <div className={styles.statValue}>{zoneValue}</div>
+                <div className={styles.statLabel}>{zoneLabel}</div>
               </div>
               <div className={styles.statBox}>
                 <div className={styles.statIcon}>
@@ -434,9 +446,11 @@ export default function HomePage() {
                     campusLat={campusCfg.lat}
                     campusLng={campusCfg.lng}
                     campusRadius={campusCfg.radius}
+                    campusPolygon={gpsData?.polygon || campusCfg.polygon}
                     userLat={gpsData.lat}
                     userLng={gpsData.lng}
                     inRange={gpsData.inRange}
+                    geofence={geofenceType}
                   />
                 </div>
               ) : (
@@ -444,6 +458,8 @@ export default function HomePage() {
                   status={status}
                   distance={gpsData?.distance}
                   accuracy={gpsData?.accuracy}
+                  geofence={geofenceType}
+                  campusName={campusName}
                 />
               )}
             </div>
@@ -465,7 +481,7 @@ export default function HomePage() {
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                 <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
-              Distance within allowed radius · System verified
+              Inside attendance zone · System verified
             </div>
           )}
 

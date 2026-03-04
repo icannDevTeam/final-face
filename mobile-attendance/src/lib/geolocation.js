@@ -9,11 +9,22 @@
  * redundant GPS reads when components mount/re-render quickly.
  */
 import { memGet, memSet, TTL } from './cache';
+import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
+import { point } from '@turf/helpers';
+import campusPolygonFeature from '../config/campusPolygon.json';
 
 // ─── Campus coordinates (BINUS School Simprug) ───────────────────────
 const CAMPUS_LAT = parseFloat(import.meta.env.VITE_CAMPUS_LAT) || -6.2307;
 const CAMPUS_LNG = parseFloat(import.meta.env.VITE_CAMPUS_LNG) || 106.7865;
-const CAMPUS_RADIUS_M = parseFloat(import.meta.env.VITE_CAMPUS_RADIUS) || 500; // meters
+const CAMPUS_RADIUS_M = parseFloat(import.meta.env.VITE_CAMPUS_RADIUS) || 300; // meters
+const CAMPUS_POLYGON_FEATURE =
+  campusPolygonFeature?.geometry?.coordinates?.length ? campusPolygonFeature : null;
+const CAMPUS_POLYGON_COORDS = CAMPUS_POLYGON_FEATURE
+  ? CAMPUS_POLYGON_FEATURE.geometry.coordinates.map((ring) =>
+      ring.map(([lng, lat]) => [lat, lng])
+    )
+  : null;
+const CAMPUS_NAME = campusPolygonFeature?.properties?.name || 'Campus';
 const MAX_GPS_ACCURACY_M = 100; // reject readings less accurate than 100m (anti-spoof)
 
 // ─── Haversine distance (metres) ─────────────────────────────────────
@@ -44,6 +55,36 @@ function getCurrentPosition(options = {}) {
   });
 }
 
+function isInsideCampusPolygon(lat, lng) {
+  if (!CAMPUS_POLYGON_FEATURE) return null;
+  try {
+    return booleanPointInPolygon(point([lng, lat]), CAMPUS_POLYGON_FEATURE, {
+      ignoreBoundary: false,
+    });
+  } catch (err) {
+    console.warn('Invalid campus polygon geometry:', err);
+    return null;
+  }
+}
+
+function buildProximityResult(lat, lng, accuracy) {
+  const distance = haversineMetres(lat, lng, CAMPUS_LAT, CAMPUS_LNG);
+  const polygonCheck = isInsideCampusPolygon(lat, lng);
+  const geofenceType = polygonCheck != null ? 'polygon' : 'radius';
+
+  return {
+    inRange: polygonCheck != null ? polygonCheck : distance <= CAMPUS_RADIUS_M,
+    distance: Math.round(distance),
+    accuracy: Math.round(accuracy),
+    lat,
+    lng,
+    campusRadius: CAMPUS_RADIUS_M,
+    geofence: geofenceType,
+    polygon: CAMPUS_POLYGON_COORDS,
+    campusName: CAMPUS_NAME,
+  };
+}
+
 // ─── Public API ──────────────────────────────────────────────────────
 
 /**
@@ -65,16 +106,7 @@ export async function checkProximity() {
       throw new Error(`GPS accuracy too low (${Math.round(accuracy)}m). Please ensure GPS is enabled and you are outdoors.`);
     }
 
-    const distance = haversineMetres(lat, lng, CAMPUS_LAT, CAMPUS_LNG);
-
-    const result = {
-      inRange: distance <= CAMPUS_RADIUS_M,
-      distance: Math.round(distance),
-      accuracy: Math.round(accuracy),
-      lat,
-      lng,
-      campusRadius: CAMPUS_RADIUS_M,
-    };
+    const result = buildProximityResult(lat, lng, accuracy);
 
     memSet('proximity', result);
     return result;
@@ -110,15 +142,7 @@ export function watchProximity(onChange, onError) {
         return;
       }
 
-      const distance = haversineMetres(lat, lng, CAMPUS_LAT, CAMPUS_LNG);
-      onChange({
-        inRange: distance <= CAMPUS_RADIUS_M,
-        distance: Math.round(distance),
-        accuracy: Math.round(accuracy),
-        lat,
-        lng,
-        campusRadius: CAMPUS_RADIUS_M,
-      });
+      onChange(buildProximityResult(lat, lng, accuracy));
     },
     (err) => {
       const messages = {
@@ -142,5 +166,12 @@ export function watchProximity(onChange, onError) {
  * Get the campus configuration (for display purposes).
  */
 export function getCampusConfig() {
-  return { lat: CAMPUS_LAT, lng: CAMPUS_LNG, radius: CAMPUS_RADIUS_M };
+  return {
+    lat: CAMPUS_LAT,
+    lng: CAMPUS_LNG,
+    radius: CAMPUS_RADIUS_M,
+    polygon: CAMPUS_POLYGON_COORDS,
+    geofence: CAMPUS_POLYGON_FEATURE ? 'polygon' : 'radius',
+    name: CAMPUS_NAME,
+  };
 }
