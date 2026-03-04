@@ -31,6 +31,13 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
+// Listen for SKIP_WAITING message from the client
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 // Activate — clean old caches
 self.addEventListener('activate', (event) => {
   const keepCaches = [CACHE_NAME, STATIC_CACHE, MODEL_CACHE];
