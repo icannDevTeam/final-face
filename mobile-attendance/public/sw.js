@@ -1,5 +1,5 @@
-const CACHE_NAME = 'binus-attendance-v7';
-const STATIC_CACHE = 'binus-static-v7';
+const CACHE_NAME = 'binus-attendance-v8';
+const STATIC_CACHE = 'binus-static-v8';
 const MODEL_CACHE = 'binus-models-v1';   // ML models rarely change — long-lived
 
 const PRECACHE_URLS = [
@@ -89,21 +89,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Map tiles (OSM, MapTiler, Mapbox, Google, Carto, etc.): network-first
-  // so updated tiles are always shown; fall back to cache when offline.
+  // Map tiles (OSM, MapTiler, Mapbox, Google, Carto, etc.): always fetch
+  // from network, bypassing browser HTTP cache. Do NOT cache tiles in SW —
+  // tile CDNs handle caching; storing them locally causes stale map issues.
   const tileHosts = ['tile.openstreetmap.org', 'tile.osm.org', 'api.maptiler.com',
     'api.mapbox.com', 'tiles.mapbox.com', 'mt0.google.com', 'mt1.google.com',
     'basemaps.cartocdn.com', 'server.arcgisonline.com'];
   if (tileHosts.some((h) => url.hostname.includes(h)) || url.pathname.match(/\/\d+\/\d+\/\d+/)) {
     event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
+      fetch(event.request, { cache: 'no-store' })
         .catch(() => caches.match(event.request))
     );
     return;
