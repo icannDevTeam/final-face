@@ -1,5 +1,5 @@
-const CACHE_NAME = 'binus-attendance-v6';
-const STATIC_CACHE = 'binus-static-v6';
+const CACHE_NAME = 'binus-attendance-v7';
+const STATIC_CACHE = 'binus-static-v7';
 const MODEL_CACHE = 'binus-models-v1';   // ML models rarely change — long-lived
 
 const PRECACHE_URLS = [
@@ -82,20 +82,22 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Map tiles (openstreetmap): stale-while-revalidate — show cached fast, update in bg
-  if (url.hostname.includes('tile.openstreetmap.org') || url.hostname.includes('tile.osm.org')) {
+  // Map tiles (OSM, MapTiler, Mapbox, Google, Carto, etc.): network-first
+  // so updated tiles are always shown; fall back to cache when offline.
+  const tileHosts = ['tile.openstreetmap.org', 'tile.osm.org', 'api.maptiler.com',
+    'api.mapbox.com', 'tiles.mapbox.com', 'mt0.google.com', 'mt1.google.com',
+    'basemaps.cartocdn.com', 'server.arcgisonline.com'];
+  if (tileHosts.some((h) => url.hostname.includes(h)) || url.pathname.match(/\/\d+\/\d+\/\d+/)) {
     event.respondWith(
-      caches.match(event.request).then((cached) => {
-        const fetchPromise = fetch(event.request).then((response) => {
+      fetch(event.request)
+        .then((response) => {
           if (response.ok) {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
           }
           return response;
-        }).catch(() => cached);
-
-        return cached || fetchPromise;
-      })
+        })
+        .catch(() => caches.match(event.request))
     );
     return;
   }
