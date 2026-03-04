@@ -5,6 +5,14 @@
  * and the BINUS School Simprug campus. Students must be within the
  * configured radius to clock in.
  *
+ * ACCURACY STRATEGY:
+ *  - getCurrentPosition forces a FRESH fix (maximumAge: 0) so the
+ *    browser cannot serve a stale Wi-Fi/cell-tower position.
+ *  - getAccuratePosition uses watchPosition internally, collects
+ *    progressive fixes for up to 8 seconds, and resolves with the
+ *    most accurate reading. This avoids returning a wildly inaccurate
+ *    first fix (common on mobile).
+ *
  * CACHING: checkProximity() caches its result for 5 seconds to avoid
  * redundant GPS reads when components mount/re-render quickly.
  */
@@ -16,7 +24,7 @@ import campusPolygonFeature from '../config/campusPolygon.json';
 // ─── Campus coordinates (BINUS School Simprug) ───────────────────────
 const CAMPUS_LAT = parseFloat(import.meta.env.VITE_CAMPUS_LAT) || -6.2307;
 const CAMPUS_LNG = parseFloat(import.meta.env.VITE_CAMPUS_LNG) || 106.7865;
-const CAMPUS_RADIUS_M = parseFloat(import.meta.env.VITE_CAMPUS_RADIUS) || 450; // meters
+const CAMPUS_RADIUS_M = parseFloat(import.meta.env.VITE_CAMPUS_RADIUS) || 450; // metres
 const CAMPUS_POLYGON_FEATURE =
   campusPolygonFeature?.geometry?.coordinates?.length ? campusPolygonFeature : null;
 const CAMPUS_POLYGON_COORDS = CAMPUS_POLYGON_FEATURE
@@ -25,7 +33,11 @@ const CAMPUS_POLYGON_COORDS = CAMPUS_POLYGON_FEATURE
     )
   : null;
 const CAMPUS_NAME = campusPolygonFeature?.properties?.name || 'Campus';
-const MAX_GPS_ACCURACY_M = 100; // reject readings less accurate than 100m (anti-spoof)
+
+// Accuracy thresholds (metres)
+const GOOD_ACCURACY_M   = 30;  // immediately accept a fix this accurate
+const MAX_GPS_ACCURACY_M = 150; // reject readings worse than this (anti-spoof)
+const SETTLE_TIME_MS     = 8_000; // how long to wait for a better fix
 
 // ─── Haversine distance (metres) ─────────────────────────────────────
 function haversineMetres(lat1, lon1, lat2, lon2) {
@@ -48,10 +60,71 @@ function getCurrentPosition(options = {}) {
     }
     navigator.geolocation.getCurrentPosition(resolve, reject, {
       enableHighAccuracy: true,
-      timeout: 10_000,
-      maximumAge: 30_000,
+      timeout: 15_000,
+      maximumAge: 0, // ALWAYS request a fresh fix — never use stale cache
       ...options,
     });
+  });
+}
+
+/**
+ * Use watchPosition to collect progressive GPS fixes and resolve with
+ * the most accurate one.  Resolves early if a fix with ≤ GOOD_ACCURACY_M
+ * arrives, otherwise resolves after SETTLE_TIME_MS with the best fix seen.
+ */
+function getAccuratePosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation is not supported by this browser.'));
+      return;
+    }
+
+    let bestPosition = null;
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      navigator.geolocation.clearWatch(watchId);
+      clearTimeout(timer);
+      if (bestPosition) {
+        resolve(bestPosition);
+      } else {
+        reject(new Error('Unable to get an accurate GPS fix. Please ensure location/GPS is enabled.'));
+      }
+    };
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const acc = pos.coords.accuracy;
+        // Keep the most accurate reading seen so far
+        if (!bestPosition || acc < bestPosition.coords.accuracy) {
+          bestPosition = pos;
+        }
+        // If we got a really good fix, resolve immediately
+        if (acc <= GOOD_ACCURACY_M) {
+          finish();
+        }
+      },
+      (err) => {
+        // On hard error with no position collected yet, reject
+        if (!bestPosition) {
+          settled = true;
+          clearTimeout(timer);
+          navigator.geolocation.clearWatch(watchId);
+          reject(err);
+        }
+        // Otherwise ignore transient errors — we already have a position
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 20_000,
+        maximumAge: 0,
+      }
+    );
+
+    // After settle time, resolve with the best fix we have
+    const timer = setTimeout(finish, SETTLE_TIME_MS);
   });
 }
 
@@ -91,6 +164,10 @@ function buildProximityResult(lat, lng, accuracy) {
  * Check if the user is within campus proximity.
  * Returns { inRange, distance, accuracy, lat, lng, campusRadius }
  * Cached for 5 seconds to prevent redundant GPS reads on quick re-renders.
+ *
+ * Uses getAccuratePosition() which collects progressive GPS fixes for up
+ * to 8 seconds and returns the most accurate one. Falls back to a single
+ * getCurrentPosition() if the watch-based approach fails.
  */
 export async function checkProximity() {
   // ── Short-lived cache to avoid rapid-fire GPS reads ───────────────
@@ -98,12 +175,22 @@ export async function checkProximity() {
   if (cached) return cached;
 
   try {
-    const pos = await getCurrentPosition();
+    // Try the progressive-accuracy approach first
+    let pos;
+    try {
+      pos = await getAccuratePosition();
+    } catch {
+      // Fallback to single fresh fix
+      pos = await getCurrentPosition();
+    }
     const { latitude: lat, longitude: lng, accuracy } = pos.coords;
 
     // Reject suspiciously inaccurate GPS readings (potential spoofing)
     if (accuracy > MAX_GPS_ACCURACY_M) {
-      throw new Error(`GPS accuracy too low (${Math.round(accuracy)}m). Please ensure GPS is enabled and you are outdoors.`);
+      throw new Error(
+        `GPS accuracy too low (${Math.round(accuracy)}m). ` +
+        'Please ensure GPS is enabled. Moving near a window or outdoors helps.'
+      );
     }
 
     const result = buildProximityResult(lat, lng, accuracy);
@@ -155,7 +242,7 @@ export function watchProximity(onChange, onError) {
     {
       enableHighAccuracy: true,
       timeout: 15_000,
-      maximumAge: 10_000,
+      maximumAge: 0, // never serve stale cached positions
     }
   );
 
