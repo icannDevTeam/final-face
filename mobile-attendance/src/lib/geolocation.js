@@ -24,7 +24,7 @@ import campusPolygonFeature from '../config/campusPolygon.json';
 // ─── Campus coordinates (BINUS School Simprug) ───────────────────────
 const CAMPUS_LAT = parseFloat(import.meta.env.VITE_CAMPUS_LAT) || -6.2307;
 const CAMPUS_LNG = parseFloat(import.meta.env.VITE_CAMPUS_LNG) || 106.7865;
-const CAMPUS_RADIUS_M = parseFloat(import.meta.env.VITE_CAMPUS_RADIUS) || 450; // metres
+const CAMPUS_RADIUS_M = parseFloat(import.meta.env.VITE_CAMPUS_RADIUS) || 500; // metres
 const CAMPUS_POLYGON_FEATURE =
   campusPolygonFeature?.geometry?.coordinates?.length ? campusPolygonFeature : null;
 const CAMPUS_POLYGON_COORDS = CAMPUS_POLYGON_FEATURE
