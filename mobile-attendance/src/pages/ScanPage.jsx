@@ -129,16 +129,22 @@ export default function ScanPage() {
 
   const drawOverlay = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current) return;
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const det = await detectFace(video);
-    if (det) {
+      if (!isModelsLoaded()) {
+        animRef.current = requestAnimationFrame(drawOverlay);
+        return;
+      }
+
+      const det = await detectFace(video);
+      if (det) {
       setFaceDetected(true);
       const { x, y, width, height } = det.box;
 
@@ -165,6 +171,11 @@ export default function ScanPage() {
     }
 
     animRef.current = requestAnimationFrame(drawOverlay);
+    } catch (err) {
+      console.error('Overlay draw error:', err);
+      // Keep the loop alive even if one frame fails
+      animRef.current = requestAnimationFrame(drawOverlay);
+    }
   }, []);
 
   // ─── Face recognition scan loop ────────────────────────────
