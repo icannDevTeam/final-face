@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@turf/boolean-point-in-polygon": "^7.3.4",
+    "@turf/helpers": "^7.3.4",
     "face-api.js": "^0.22.2",
     "firebase": "^12.9.0",
     "leaflet": "^1.9.4",

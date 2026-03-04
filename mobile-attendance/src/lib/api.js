@@ -16,10 +16,8 @@ import {
   setDoc,
   collection,
   query,
-  where,
   getDocs,
   orderBy,
-  serverTimestamp,
 } from 'firebase/firestore';
 import { memGet, memSet, lsGet, lsSet, TTL } from './cache';
 

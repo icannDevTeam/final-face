@@ -37,7 +37,8 @@ export default function ScanPage() {
   const [matchResult, setMatchResult] = useState(null);
   const [clockResult, setClockResult] = useState(null);
   const [faceDetected, setFaceDetected] = useState(false);
-  const [modelsReady, setModelsReady] = useState(false);
+  const [modelsReady, setModelsReady] = useState(false); // means models + descriptors loaded
+  const [cameraReady, setCameraReady] = useState(false);
 
   // Streak tracking
   const streakRef = useRef({ id: null, count: 0 });
@@ -50,12 +51,14 @@ export default function ScanPage() {
     (async () => {
       try {
         // Wait for Firebase anonymous auth before reading Firestore
-        setStatusMsg('Authenticating…');
-        const { authReady } = await import('../lib/firebase');
-        await authReady;
+        setStatusMsg('Preparing face engine…');
+        const firebaseModule = await import('../lib/firebase');
+        const authPromise = firebaseModule.authReady;
 
         setStatusMsg('Loading face detection models…');
-        await loadModels((msg) => !cancelled && setStatusMsg(msg));
+        const modelPromise = loadModels((msg) => !cancelled && setStatusMsg(msg));
+
+        await Promise.all([authPromise, modelPromise]);
 
         setStatusMsg('Loading face database…');
         const count = await loadDescriptors((msg) => !cancelled && setStatusMsg(msg));
@@ -86,6 +89,7 @@ export default function ScanPage() {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+    setCameraReady(false);
     if (animRef.current) cancelAnimationFrame(animRef.current);
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
   }, []);
@@ -112,10 +116,10 @@ export default function ScanPage() {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
       }
-
-      setPhase('scanning');
-      setStatusMsg('Look at the camera');
+      setCameraReady(true);
+      setStatusMsg('Camera ready. Loading face engine…');
     } catch (err) {
+      console.error('Camera access denied:', err);
       setPhase('error');
       setStatusMsg('Camera access denied. Please allow camera permissions.');
     }
@@ -199,7 +203,7 @@ export default function ScanPage() {
         // Ignore transient errors
       }
     }, SCAN_INTERVAL);
-  }, []);
+  }, [performClockIn]);
 
   // ─── Clock in ──────────────────────────────────────────────
 
@@ -249,11 +253,19 @@ export default function ScanPage() {
   // ─── Lifecycle ─────────────────────────────────────────────
 
   useEffect(() => {
-    if (modelsReady) {
-      startCamera();
-    }
+    startCamera();
     return () => stopCamera();
-  }, [modelsReady, startCamera, stopCamera]);
+  }, [startCamera, stopCamera]);
+
+  // Once both camera and models/descriptors are ready, enter scanning phase
+  useEffect(() => {
+    if (cameraReady && modelsReady) {
+      setPhase('scanning');
+      setStatusMsg('Look at the camera');
+    } else if (cameraReady && !modelsReady) {
+      setStatusMsg('Camera ready. Loading face engine…');
+    }
+  }, [cameraReady, modelsReady]);
 
   // Start scanning & overlay once video is playing
   useEffect(() => {
