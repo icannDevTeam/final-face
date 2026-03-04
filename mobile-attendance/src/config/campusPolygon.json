@@ -3,24 +3,10 @@
   "properties": {
     "name": "BINUS School Simprug",
     "safetyMarginMeters": 20,
-    "notes": "Polygon covers interior walkways to prevent roadside clock-ins. Update coordinates if campus perimeter changes."
+    "notes": "PLACEHOLDER — coordinates cleared to use radius-based geofence. Replace with real campus perimeter from Google Earth/GIS export when ready."
   },
   "geometry": {
     "type": "Polygon",
-    "coordinates": [
-      [
-        [106.7859, -6.2301],
-        [106.78615, -6.23008],
-        [106.78638, -6.23029],
-        [106.78647, -6.23063],
-        [106.78643, -6.23097],
-        [106.78617, -6.2312],
-        [106.78586, -6.23118],
-        [106.7856, -6.23086],
-        [106.78555, -6.23053],
-        [106.78566, -6.23026],
-        [106.7859, -6.2301]
-      ]
-    ]
+    "coordinates": []
   }
 }
