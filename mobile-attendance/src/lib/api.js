@@ -292,3 +292,45 @@ export async function getTodaySummary() {
     return { date, total: 0, present: 0, late: 0, records: [] };
   }
 }
+
+/**
+ * Get recent attendance records for a specific student (by employeeNo).
+ * Scans the last `days` attendance date documents.
+ * Returns [{ date, timestamp, status, late, source }] sorted newest-first.
+ * Cached in memory for 5 minutes.
+ */
+export async function getAttendanceHistory(studentId, days = 14) {
+  const cacheKey = `history_${studentId}`;
+  const cached = memGet(cacheKey, 5 * 60_000);
+  if (cached) return cached;
+
+  const results = [];
+  const today = getWIBNow();
+
+  for (let i = 0; i < days; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().slice(0, 10);
+
+    try {
+      const docRef = doc(db, 'attendance', dateStr, 'records', String(studentId));
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        results.push({
+          date: dateStr,
+          timestamp: data.timestamp || dateStr,
+          startTime: (data.timestamp || '').split(' ')[1] || '—',
+          status: data.status || (data.late ? 'Late' : 'Present'),
+          late: !!data.late,
+          source: data.source || 'unknown',
+        });
+      }
+    } catch {
+      // Skip dates we can't read
+    }
+  }
+
+  memSet(cacheKey, results);
+  return results;
+}
