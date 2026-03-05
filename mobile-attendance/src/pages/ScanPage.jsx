@@ -11,7 +11,6 @@ import {
 import { checkIn } from '../lib/api';
 import { checkProximity } from '../lib/geolocation';
 import {
-  ArrowLeft,
   Camera,
   Loader2,
   CheckCircle2,
@@ -149,35 +148,35 @@ export default function ScanPage() {
 
       const det = await detectFace(video);
       if (det) {
-      setFaceDetected(true);
-      const { x, y, width, height } = det.box;
+        setFaceDetected(true);
+        const { x, y, width, height } = det.box;
+        const cx = x + width / 2;
+        const cy = y + height / 2;
+        const rx = width / 2 + 15;
+        const ry = height / 2 + 25;
 
-      ctx.strokeStyle = '#00A3E0';
-      ctx.lineWidth = 3;
-      ctx.setLineDash([8, 4]);
-      ctx.strokeRect(x, y, width, height);
+        // Elliptical face outline
+        ctx.strokeStyle = '#00A3E0';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([8, 4]);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.stroke();
 
-      // Corner accents
-      const corner = 16;
-      ctx.setLineDash([]);
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = '#0054A6';
-      // Top-left
-      ctx.beginPath(); ctx.moveTo(x, y + corner); ctx.lineTo(x, y); ctx.lineTo(x + corner, y); ctx.stroke();
-      // Top-right
-      ctx.beginPath(); ctx.moveTo(x + width - corner, y); ctx.lineTo(x + width, y); ctx.lineTo(x + width, y + corner); ctx.stroke();
-      // Bottom-left
-      ctx.beginPath(); ctx.moveTo(x, y + height - corner); ctx.lineTo(x, y + height); ctx.lineTo(x + corner, y + height); ctx.stroke();
-      // Bottom-right
-      ctx.beginPath(); ctx.moveTo(x + width - corner, y + height); ctx.lineTo(x + width, y + height); ctx.lineTo(x + width, y + height - corner); ctx.stroke();
-    } else {
-      setFaceDetected(false);
-    }
+        // Solid inner ring
+        ctx.setLineDash([]);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(0,84,166,0.5)';
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx - 8, ry - 8, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        setFaceDetected(false);
+      }
 
     animRef.current = requestAnimationFrame(drawOverlay);
     } catch (err) {
       console.error('Overlay draw error:', err);
-      // Keep the loop alive even if one frame fails
       animRef.current = requestAnimationFrame(drawOverlay);
     }
   }, []);
@@ -259,6 +258,20 @@ export default function ScanPage() {
       setClockResult(result2.record);
       setPhase('done');
       setStatusMsg(result2.alreadyDone ? 'Already clocked in today' : 'Attendance recorded!');
+
+      // Persist last clock-in for HomePage display
+      try {
+        localStorage.setItem('lastClockIn', JSON.stringify({
+          studentId: result.student.id,
+          name: result.student.name,
+          homeroom: result.student.homeroom,
+          grade: result.student.grade,
+          timestamp: result2.record?.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          status: result2.record?.status || (result2.record?.late ? 'Late' : 'Present'),
+          date: new Date().toISOString().slice(0, 10),
+          alreadyDone: result2.alreadyDone,
+        }));
+      } catch { /* localStorage not available */ }
     } catch (err) {
       setPhase('error');
       setStatusMsg(err.message);
@@ -311,11 +324,18 @@ export default function ScanPage() {
       {/* Header */}
       <div className={styles.header}>
         <button className={styles.backBtn} onClick={() => { stopCamera(); navigate('/'); }}>
-          <ArrowLeft size={22} />
+          <XCircle size={20} />
         </button>
-        <img src="/logo.jpe" alt="BINUS" className={styles.headerLogo} />
-        <h2 className={styles.title}>Face Recognition</h2>
+        <h2 className={styles.title}>Take your photo</h2>
+        <div style={{ width: 36 }} /> {/* spacer for centering */}
       </div>
+
+      {/* Instruction bar */}
+      {phase === 'scanning' && (
+        <div className={styles.instructionBar}>
+          Face forward &amp; look directly at camera
+        </div>
+      )}
 
       {/* Camera viewport */}
       <div className={styles.viewport}>
@@ -327,7 +347,7 @@ export default function ScanPage() {
         />
         <canvas ref={canvasRef} className={styles.overlay} />
 
-        {/* Scan frame guide */}
+        {/* Circular scan frame guide */}
         {phase === 'scanning' && (
           <div className={styles.scanGuide}>
             <div className={`${styles.scanFrame} ${faceDetected ? styles.scanFrameActive : ''}`} />
@@ -354,16 +374,28 @@ export default function ScanPage() {
         )}
 
         {/* Done overlay */}
-        {phase === 'done' && clockResult && (
+        {phase === 'done' && (
           <div className={styles.doneOverlay}>
             <div className={styles.doneCard}>
-              <CheckCircle2 size={48} className={styles.doneIcon} />
-              <h3>{clockResult.alreadyDone ? 'Already Clocked In' : 'Clocked In!'}</h3>
-              <p className={styles.doneName}>{clockResult.name}</p>
-              <p className={styles.doneStatus}>
-                {clockResult.status || (clockResult.late ? 'Late' : 'Present')}
+              <CheckCircle2 size={56} className={styles.doneIcon} />
+              <h3>{clockResult?.alreadyDone ? 'Already Clocked In' : 'Clock in successful'}</h3>
+              <p className={styles.doneMsg}>
+                {clockResult?.alreadyDone
+                  ? 'You have already clocked in today.'
+                  : 'Great job! Your clock in has been successfully saved.'}
               </p>
-              <p className={styles.doneTime}>{clockResult.timestamp}</p>
+              {clockResult && (
+                <>
+                  <p className={styles.doneName}>{clockResult.name}</p>
+                  <p className={styles.doneStatus}>
+                    {clockResult.status || (clockResult.late ? 'Late' : 'Present')}
+                  </p>
+                  <p className={styles.doneTime}>{clockResult.timestamp}</p>
+                </>
+              )}
+              <button className={styles.doneHomeBtn} onClick={() => { stopCamera(); navigate('/'); }}>
+                Back to Home
+              </button>
             </div>
           </div>
         )}
@@ -379,6 +411,20 @@ export default function ScanPage() {
           </div>
         )}
       </div>
+
+      {/* Face guidelines */}
+      {(phase === 'scanning' || phase === 'starting') && (
+        <div className={styles.guidelines}>
+          <div className={styles.guideItem}>
+            <CheckCircle2 size={16} className={styles.guideCheck} />
+            <span>Ensure that your forehead, ears, and chin are fully visible within the frame.</span>
+          </div>
+          <div className={styles.guideItem}>
+            <CheckCircle2 size={16} className={styles.guideCheck} />
+            <span>Please do not wear glasses, a mask, or any other accessories that might cover your face.</span>
+          </div>
+        </div>
+      )}
 
       {/* Bottom status */}
       <div className={styles.statusBar}>

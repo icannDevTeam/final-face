@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { checkProximity, watchProximity, getCampusConfig } from '../lib/geolocation';
+import { getAttendanceHistory } from '../lib/api';
 import styles from '../styles/Home.module.css';
 
 // Dynamically import LiveMap only when needed (Leaflet is heavy)
@@ -208,8 +209,42 @@ export default function HomePage() {
   const [useLiveMap, setUseLiveMap]   = useState(false);
   const [clock, setClock]         = useState(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
+  // Attendance log state
+  const [attendanceLog, setAttendanceLog] = useState([]);
+  const [lastClockIn, setLastClockIn]     = useState(null);
+  const [logLoading, setLogLoading]       = useState(false);
+
   const cleanupRef = useRef(null);
   const campusCfg  = getCampusConfig();
+
+  // ── Today's formatted date ────────────────────────────
+  const todayDate = new Date().toLocaleDateString('en-US', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+
+  // ── Load last clock-in from localStorage & fetch history ─
+  useEffect(() => {
+    // Last clock-in from localStorage
+    try {
+      const raw = localStorage.getItem('lastClockIn');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setLastClockIn(parsed);
+
+        // Fetch attendance history for this student
+        if (parsed.studentId) {
+          setLogLoading(true);
+          getAttendanceHistory(parsed.studentId, 7)
+            .then((records) => setAttendanceLog(records))
+            .catch(() => {})
+            .finally(() => setLogLoading(false));
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
 
   // ── Clock tick ─────────────────────────────────────────
   useEffect(() => {
@@ -494,6 +529,58 @@ export default function HomePage() {
                 <line x1="12" y1="17" x2="12.01" y2="17" />
               </svg>
               {gpsError}
+            </div>
+          )}
+
+          {/* ── Today's date + Attendance section ──────── */}
+          <div className={styles.dateSection}>
+            <span className={styles.dateText}>{todayDate}</span>
+            <span className={styles.dateBadge}>Today</span>
+          </div>
+
+          {/* Live attendance card */}
+          {lastClockIn && lastClockIn.date === new Date().toISOString().slice(0, 10) && (
+            <div className={styles.liveCard}>
+              <div className={styles.liveHeader}>
+                <div className={styles.liveDot} />
+                <span>Live attendance</span>
+              </div>
+              <div className={styles.liveBody}>
+                <div className={styles.liveInfo}>
+                  <p className={styles.liveName}>{lastClockIn.name}</p>
+                  <p className={styles.liveMeta}>{lastClockIn.homeroom}</p>
+                </div>
+                <div className={styles.liveTime}>
+                  <span className={`${styles.liveStatus} ${lastClockIn.status === 'Late' ? styles.liveStatusLate : ''}`}>
+                    {lastClockIn.status}
+                  </span>
+                  <span className={styles.liveTimestamp}>{lastClockIn.timestamp}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Attendance log */}
+          {attendanceLog.length > 0 && (
+            <div className={styles.logSection}>
+              <div className={styles.logHeader}>
+                <span className={styles.logTitle}>Attendance log</span>
+                <span className={styles.logCount}>{attendanceLog.length} days</span>
+              </div>
+              <div className={styles.logList}>
+                {attendanceLog.map((entry) => (
+                  <div key={entry.date} className={styles.logEntry}>
+                    <div className={styles.logDate}>
+                      {new Date(entry.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short' })}
+                    </div>
+                    <div className={styles.logTime}>{entry.startTime}</div>
+                    <span className={`${styles.logStatus} ${entry.late ? styles.logStatusLate : ''}`}>
+                      {entry.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {logLoading && <p className={styles.logLoading}>Loading…</p>}
             </div>
           )}
 

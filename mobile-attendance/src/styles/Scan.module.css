@@ -15,54 +15,53 @@
 .header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  background: rgba(0, 40, 85, 0.85);
+  background: #ffffff;
   z-index: 10;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 .backBtn {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #ffffff;
+  background: none;
+  border: none;
+  color: #333;
   padding: 0.5rem;
   cursor: pointer;
   border-radius: var(--radius-sm, 0.5rem);
   transition: all 0.2s ease;
-  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .backBtn:hover {
-  background: rgba(255, 255, 255, 0.15);
-  transform: translateX(-2px);
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .backBtn:active {
   transform: scale(0.92);
 }
 
-.headerLogo {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  object-fit: contain;
-  background: #ffffff;
-  padding: 2px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
 .title {
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 600;
   margin: 0;
-  color: #ffffff;
+  color: #1a1a1a;
   letter-spacing: -0.01em;
+  text-align: center;
+}
+
+/* ─── Instruction bar ────────────────────────────────── */
+.instructionBar {
+  padding: 0.625rem 1.25rem;
+  background: #f0f4ff;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #0054A6;
+  border-bottom: 1px solid rgba(0, 84, 166, 0.08);
 }
 
 /* ─── Camera Viewport ────────────────────────────────── */
@@ -364,15 +363,72 @@
   transform: scale(0.96);
 }
 
+/* ─── Face Guidelines ────────────────────────────────── */
+.guidelines {
+  padding: 1rem 1.25rem;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.guideItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #333;
+}
+
+.guideCheck {
+  color: #10B981;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* ─── Done Card extras ───────────────────────────────── */
+.doneMsg {
+  color: var(--text-secondary, #5A6B82);
+  font-size: 0.85rem;
+  margin: 0.25rem 0 0.75rem;
+  line-height: 1.5;
+}
+
+.doneHomeBtn {
+  display: block;
+  width: 100%;
+  padding: 0.85rem 1.5rem;
+  margin-top: 1rem;
+  border: none;
+  background: var(--binus-gradient, linear-gradient(135deg, #0054A6 0%, #00A3E0 100%));
+  color: #ffffff;
+  border-radius: var(--radius-full, 9999px);
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: 0 4px 20px rgba(0, 84, 166, 0.3);
+  letter-spacing: 0.01em;
+}
+
+.doneHomeBtn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(0, 84, 166, 0.4);
+}
+
+.doneHomeBtn:active {
+  transform: scale(0.96);
+}
+
 /* ─── Bottom Status Bar ──────────────────────────────── */
 .statusBar {
   padding: 0.875rem 1.25rem;
   padding-bottom: max(0.875rem, env(safe-area-inset-bottom, 0.875rem));
-  background: rgba(0, 40, 85, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: #ffffff;
   z-index: 10;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 .statusText {
@@ -380,7 +436,7 @@
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  color: rgba(255, 255, 255, 0.75);
+  color: #5A6B82;
   font-size: 0.82rem;
   margin: 0;
   font-weight: 500;
@@ -389,7 +445,7 @@
 
 .statusTextDone {
   text-align: center;
-  color: #86EFAC;
+  color: #10B981;
   font-size: 0.82rem;
   font-weight: 600;
   margin: 0;
@@ -408,7 +464,7 @@
 /* ─── Copyright ──────────────────────────────────────── */
 .scanCopyright {
   text-align: center;
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(0, 0, 0, 0.25);
   font-size: 0.6rem;
   font-weight: 500;
   letter-spacing: 0.02em;
