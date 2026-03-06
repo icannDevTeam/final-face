@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   Home Page — BINUS Attendance Check-in
+   Home Page — Dashboard + Full-screen Map
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* ─── Keyframes ──────────────────────────────────────── */
@@ -14,8 +14,13 @@
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(12px); }
+  from { opacity: 0; transform: translateY(16px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @keyframes fadePulse {
@@ -28,7 +33,10 @@
   100% { transform: translateX(-50%); }
 }
 
-/* ─── Page wrapper ───────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+   DASHBOARD VIEW
+   ═══════════════════════════════════════════════════════════════════════ */
+
 .page {
   min-height: 100dvh;
   display: flex;
@@ -37,7 +45,6 @@
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* ─── Card shell ─────────────────────────────────────── */
 .card {
   width: 100%;
   flex: 1;
@@ -93,7 +100,7 @@
   margin: 0;
 }
 
-/* ─── Status badge (header right) ────────────────────── */
+/* ─── Status badge ───────────────────────────────────── */
 .statusBadge {
   display: flex;
   align-items: center;
@@ -136,518 +143,151 @@
   animation: pulseRing 1.5s ease-out infinite;
 }
 
-.statusDot.out    { background: #991B1B; }
-.statusDot.in     { background: #0054A6; }
+.statusDot.out      { background: #991B1B; }
+.statusDot.in       { background: #0054A6; }
 .statusDot.checking { background: #00A3E0; }
-.statusDot.error  { background: #fb923c; }
+.statusDot.error    { background: #fb923c; }
 
 /* ─── Body ───────────────────────────────────────────── */
 .body {
-  padding: 1rem;
+  padding: 1.25rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.875rem;
   flex: 1;
+  overflow-y: auto;
 }
 
-/* ─── Status card ────────────────────────────────────── */
-.statusCard {
-  border-radius: 1rem;
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.75rem;
-  transition: all 0.6s ease;
-}
-
-.statusCard.out {
-  background: linear-gradient(135deg, #fef2f2, #fde8e8);
-  border: 1.5px solid #e8a0a0;
-}
-
-.statusCard.in {
-  background: linear-gradient(135deg, #E8F1FB, #d6e8f7);
-  border: 1.5px solid #93c5fd;
-}
-
-.statusCard.checking {
-  background: linear-gradient(135deg, #e8f7fd, #d6f0fa);
-  border: 1.5px solid #7dd3fc;
-}
-
-.statusCard.error {
-  background: linear-gradient(135deg, #fffbeb, #fef3c7);
-  border: 1.5px solid #fcd34d;
-}
-
-/* ─── Fingerprint icon ───────────────────────────────── */
-.fingerprintWrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100px;
-  height: 100px;
-}
-
-/* Pulse rings */
-.pulseRing {
-  position: absolute;
-  border-radius: 50%;
-  animation: pulseRing 2s ease-out infinite;
-}
-
-.pulseRing.out    { background: #991B1B; }
-.pulseRing.in     { background: #0054A6; }
-.pulseRing.checking { background: #00A3E0; }
-.pulseRing.error  { background: #f59e0b; }
-
-.fingerprintCircle {
-  position: relative;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.fingerprintCircle.out {
-  background: linear-gradient(135deg, #991B1B, #7F1D1D);
-  box-shadow: 0 0 32px rgba(153, 27, 27, 0.5), 0 8px 24px rgba(0, 0, 0, 0.2);
-}
-
-.fingerprintCircle.in {
-  background: linear-gradient(135deg, #0054A6, #003A75);
-  box-shadow: 0 0 32px rgba(0, 84, 166, 0.5), 0 8px 24px rgba(0, 0, 0, 0.2);
-}
-
-.fingerprintCircle.checking {
-  background: linear-gradient(135deg, #00A3E0, #0078D4);
-  box-shadow: 0 0 32px rgba(0, 163, 224, 0.5), 0 8px 24px rgba(0, 0, 0, 0.2);
-}
-
-.fingerprintCircle.error {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  box-shadow: 0 0 32px rgba(245, 158, 11, 0.5), 0 8px 24px rgba(0, 0, 0, 0.2);
-}
-
-.fingerprintSvg {
-  width: 38px;
-  height: 38px;
-}
-
-.spinnerRing {
-  animation: spin 1s linear infinite;
-  transform-origin: 22px 22px;
-}
-
-/* ─── Status text ────────────────────────────────────── */
-.statusTextWrap {
-  text-align: center;
+/* ─── Welcome section ────────────────────────────────── */
+.welcomeSection {
   animation: slideUp 0.4s ease forwards;
 }
 
-.statusTitle {
-  font-size: 1.05rem;
-  font-weight: 700;
-  margin: 0 0 0.2rem;
-}
-
-.statusTitle.out      { color: #991B1B; }
-.statusTitle.in       { color: #003A75; }
-.statusTitle.checking { color: #0078D4; }
-.statusTitle.error    { color: #b45309; }
-
-.statusSub {
-  font-size: 0.65rem;
-  color: #64748b;
-  margin: 0;
-  padding: 0 0.5rem;
-}
-
-/* ─── Stats row ──────────────────────────────────────── */
-.statsRow {
-  display: flex;
-  width: 100%;
-  gap: 0.75rem;
-}
-
-.statBox {
-  flex: 1;
-  border-radius: 0.75rem;
-  padding: 0.625rem;
-  text-align: center;
-  background: rgba(255, 255, 255, 0.7);
-}
-
-.statIcon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  margin: 0 auto 0.25rem;
-  border-radius: 0.5rem;
-  background: linear-gradient(135deg, #d6e8f7, #E8F1FB);
-  color: #0054A6;
-}
-
-.statValue {
-  font-weight: 700;
-  font-size: 0.8rem;
-  color: #1e293b;
-  margin-top: 0.125rem;
-}
-
-.statLabel {
-  font-size: 0.55rem;
-  color: #94a3b8;
-}
-
-/* ─── Map section ────────────────────────────────────── */
-.mapToggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-radius: 1rem;
-  padding: 0.75rem 1rem;
-  font-size: 0.85rem;
+.welcomeDate {
+  font-size: 0.72rem;
+  color: #94A3B8;
+  margin: 0 0 0.15rem;
   font-weight: 500;
-  background: #f8fafc;
-  color: #475569;
-  border: 1.5px solid #e2e8f0;
-  cursor: pointer;
-  transition: all 0.2s ease;
 }
 
-.mapToggle:hover {
-  background: #f1f5f9;
+.welcomeHeading {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #0F1D35;
+  margin: 0;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
-.mapToggleLeft {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.mapChevron {
-  display: inline-block;
-  transition: transform 0.3s ease;
-}
-
-.mapChevron.open {
-  transform: rotate(180deg);
-}
-
-.mapSlideUp {
-  animation: slideUp 0.4s ease forwards;
-}
-
-/**  Static map preview (used when Leaflet is not loaded)  */
-.mapPreview {
-  position: relative;
+/* ─── Summary card (Clock In / Status) ───────────────── */
+.summaryCard {
   border-radius: 1rem;
+  background: #f8fafc;
+  border: 1px solid #e8edf2;
   overflow: hidden;
-  height: 160px;
-  background: linear-gradient(135deg, #e8f0fe 0%, #dde8f5 50%, #d0e4f0 100%);
+  animation: slideUp 0.4s ease 0.05s both;
 }
 
-.mapGrid {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0.4;
+.summaryRow {
+  display: flex;
+  align-items: stretch;
 }
 
-.radiusCircle {
-  position: absolute;
-  border-radius: 50%;
-  border-width: 2px;
-  border-style: solid;
-  top: 50%;
-  left: 50%;
-  transform: translate(-80%, -60%);
-  transition: all 0.6s ease;
-}
-
-.lineToUser {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-
-.campusPin {
-  position: absolute;
+.summaryItem {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  top: 28%;
-  left: 38%;
-  transform: translate(-50%, -50%);
+  gap: 0.35rem;
+  padding: 1rem 0.75rem;
 }
 
-.campusPinLabel {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  border-radius: 9999px;
-  padding: 0.2rem 0.5rem;
-  font-size: 0.6rem;
+.summaryDivider {
+  width: 1px;
+  background: #e8edf2;
+  align-self: stretch;
+  margin: 0.75rem 0;
+}
+
+.summaryLabel {
+  font-size: 0.68rem;
+  color: #94A3B8;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.summaryValue {
+  font-size: 1.1rem;
   font-weight: 700;
-  background: white;
-  color: #1e3a5f;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  color: #1a1a1a;
+  font-variant-numeric: tabular-nums;
 }
 
-.campusPinLogo {
-  width: 14px;
-  height: 14px;
-  object-fit: contain;
-  border-radius: 2px;
+.summaryLate {
+  color: #dc2626;
 }
 
-.campusPinStem {
-  width: 2px;
-  height: 8px;
-  background: #1e3a5f;
-}
-
-.campusPinDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #1e3a5f;
-}
-
-.userPin {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #3b82f6;
-  border: 3px solid white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  transform: translate(-50%, -50%);
-  transition: all 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.distLabel {
-  position: absolute;
-  bottom: 0.75rem;
-  left: 0.75rem;
-  border-radius: 0.5rem;
-  padding: 0.375rem 0.75rem;
-  font-size: 0.7rem;
-  font-weight: 600;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-}
-
-.distLabel.out   { color: #991B1B; }
-.distLabel.in    { color: #003A75; }
-
-.accBadge {
-  position: absolute;
-  bottom: 0.75rem;
-  right: 0.75rem;
-  border-radius: 0.5rem;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.65rem;
-  background: rgba(255, 255, 255, 0.8);
-  color: #64748b;
-}
-
-/* ─── Leaflet map wrapper (real map) ─────────────────── */
-.realMap {
-  border-radius: 1rem;
-  overflow: hidden;
-  height: 160px;
-}
-
-/* ─── Primary button ─────────────────────────────────── */
-.primaryBtn {
-  width: 100%;
-  border-radius: 1rem;
-  padding: 0.875rem;
-  font-weight: 600;
-  font-size: 0.875rem;
-  color: #ffffff;
-  border: none;
-  cursor: pointer;
-  transition: all 0.3s ease;
-}
-
-.primaryBtn.out {
-  background: linear-gradient(135deg, #991B1B, #7F1D1D);
-  box-shadow: 0 8px 24px rgba(153, 27, 27, 0.3);
-}
-
-.primaryBtn.in {
-  background: linear-gradient(135deg, #0054A6, #00A3E0);
-  box-shadow: 0 8px 24px rgba(0, 84, 166, 0.3);
-}
-
-.primaryBtn.checking {
-  background: linear-gradient(135deg, #00A3E0, #0078D4);
-  box-shadow: 0 8px 24px rgba(0, 163, 224, 0.3);
-  transform: scale(0.98);
-  opacity: 0.9;
-  cursor: not-allowed;
-}
-
-.primaryBtn.error {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  box-shadow: 0 8px 24px rgba(245, 158, 11, 0.3);
-}
-
-.primaryBtn:not(.checking):hover {
-  transform: translateY(-1px);
-  filter: brightness(1.05);
-}
-
-.primaryBtn:not(.checking):active {
-  transform: scale(0.98);
-}
-
-/* ─── Success banner ─────────────────────────────────── */
-.successBanner {
-  border-radius: 0.75rem;
-  padding: 0.75rem 1rem;
-  font-size: 0.7rem;
-  text-align: center;
-  background: #E8F1FB;
-  color: #003A75;
-  border: 1px solid #93c5fd;
-  animation: slideUp 0.4s ease forwards;
-}
-
-/* ─── Error detail ───────────────────────────────────── */
-.errorDetail {
-  border-radius: 0.75rem;
-  padding: 0.75rem 1rem;
-  font-size: 0.7rem;
-  text-align: center;
-  background: #fffbeb;
-  color: #92400e;
-  border: 1px solid #fde68a;
-  animation: slideUp 0.4s ease forwards;
-}
-
-/* ─── Date Section ───────────────────────────────────── */
-.dateSection {
+/* ─── Mark Attendance button ─────────────────────────── */
+.markBtn {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 0;
-  border-bottom: 1px solid #f0f0f0;
+  gap: 0.85rem;
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border-radius: 1rem;
+  border: none;
+  background: linear-gradient(135deg, #059669 0%, #10B981 100%);
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: 0 6px 20px rgba(5, 150, 105, 0.3);
+  animation: slideUp 0.4s ease 0.1s both;
 }
 
-.dateText {
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: #1a1a1a;
+.markBtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 28px rgba(5, 150, 105, 0.4);
+}
+
+.markBtn:active {
+  transform: scale(0.98);
+}
+
+.markBtnIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.markBtnText {
+  flex: 1;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.markBtnTitle {
+  font-size: 0.92rem;
+  font-weight: 700;
   letter-spacing: -0.01em;
 }
 
-.dateBadge {
-  font-size: 0.65rem;
-  font-weight: 600;
-  padding: 0.2rem 0.6rem;
-  border-radius: 9999px;
-  background: #f0f4ff;
-  color: #0054A6;
-  letter-spacing: 0.02em;
-}
-
-/* ─── Live Attendance Card ───────────────────────────── */
-.liveCard {
-  border-radius: 0.85rem;
-  background: #ffffff;
-  border: 1px solid #e8edf2;
-  overflow: hidden;
-  animation: slideUp 0.4s ease forwards;
-}
-
-.liveHeader {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.6rem 0.85rem;
-  background: #fafbfc;
-  border-bottom: 1px solid #f0f0f0;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: #5A6B82;
-  letter-spacing: 0.01em;
-}
-
-.liveDot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #10B981;
-  animation: fadePulse 2s ease-in-out infinite;
-}
-
-.liveBody {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 0.85rem;
-}
-
-.liveInfo {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.liveName {
-  margin: 0;
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: #1a1a1a;
-}
-
-.liveMeta {
-  margin: 0;
-  font-size: 0.72rem;
-  color: #94A3B8;
-}
-
-.liveTime {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.2rem;
-}
-
-.liveStatus {
+.markBtnSub {
   font-size: 0.68rem;
-  font-weight: 600;
-  padding: 0.15rem 0.5rem;
-  border-radius: 9999px;
-  background: #ECFDF5;
-  color: #047857;
+  opacity: 0.75;
+  font-weight: 400;
 }
 
-.liveStatusLate {
-  background: #FEF3C7;
-  color: #92400E;
-}
-
-.liveTimestamp {
-  font-size: 0.72rem;
-  color: #94A3B8;
-  font-weight: 500;
+.markBtnChevron {
+  opacity: 0.6;
+  flex-shrink: 0;
 }
 
 /* ─── Attendance Log ─────────────────────────────────── */
@@ -656,20 +296,20 @@
   background: #ffffff;
   border: 1px solid #e8edf2;
   overflow: hidden;
-  animation: slideUp 0.4s ease forwards;
+  animation: slideUp 0.4s ease 0.15s both;
 }
 
 .logHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.6rem 0.85rem;
+  padding: 0.65rem 0.85rem;
   background: #fafbfc;
   border-bottom: 1px solid #f0f0f0;
 }
 
 .logTitle {
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   font-weight: 600;
   color: #1a1a1a;
 }
@@ -678,6 +318,24 @@
   font-size: 0.65rem;
   font-weight: 500;
   color: #94A3B8;
+}
+
+.logTableHead {
+  background: #f8fafc;
+  border-bottom: 1px solid #e8edf2;
+}
+
+.logTableHead .logDate,
+.logTableHead .logTime,
+.logTableHead .logStatus {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: #94A3B8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: none;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .logList {
@@ -710,6 +368,8 @@
   color: #5A6B82;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+  min-width: 50px;
+  text-align: center;
 }
 
 .logStatus {
@@ -818,10 +478,296 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   MAP VIEW — Full-screen Leaflet map with floating cards
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.mapPage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: #f0f4ff;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  animation: fadeIn 0.3s ease;
+}
+
+/* ─── Floating map header ────────────────────────────── */
+.mapHeader {
+  position: absolute;
+  top: env(safe-area-inset-top, 0);
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.mapBackBtn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #1a1a1a;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.mapBackBtn:hover {
+  background: #f1f5f9;
+}
+
+.mapBackBtn:active {
+  transform: scale(0.92);
+}
+
+.mapHeaderTitle {
+  flex: 1;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.mapHeaderBadge {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 9999px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.mapHeaderBadge.out {
+  background: #fee2e2;
+  color: #991B1B;
+}
+
+.mapHeaderBadge.in {
+  background: #ECFDF5;
+  color: #047857;
+}
+
+.mapHeaderBadge.checking {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.mapHeaderBadge.error {
+  background: #FEF3C7;
+  color: #92400E;
+}
+
+.mapHeaderBadge .statusDot {
+  width: 5px;
+  height: 5px;
+}
+
+/* ─── Full-screen map container ──────────────────────── */
+.mapFull {
+  flex: 1;
+  position: relative;
+  z-index: 1;
+}
+
+/* Override Leaflet container to fill */
+.mapFull :global(.leaflet-container) {
+  width: 100%;
+  height: 100%;
+}
+
+.mapLoading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: linear-gradient(160deg, #e8f0fe 0%, #dde8f5 50%, #d0e4f0 100%);
+  color: #5A6B82;
+  font-size: 0.85rem;
+}
+
+.mapSpinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #0054A6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.mapSpinnerInline {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 0.35rem;
+}
+
+/* ─── Floating bottom card ───────────────────────────── */
+.mapBottomCard {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: #ffffff;
+  border-radius: 1.25rem 1.25rem 0 0;
+  padding: 1.25rem;
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 1.25rem));
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ─── Info row (distance + accuracy) ─────────────────── */
+.mapInfoRow {
+  display: flex;
+  gap: 1rem;
+}
+
+.mapInfoItem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #5A6B82;
+}
+
+.mapInfoItem > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.mapInfoLabel {
+  font-size: 0.6rem;
+  color: #94A3B8;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.mapInfoValue {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Status message ─────────────────────────────────── */
+.mapStatusMsg {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #5A6B82;
+  margin: 0;
+  padding: 0.6rem 0.85rem;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e8edf2;
+}
+
+.mapStatusIn {
+  color: #047857;
+  background: #ECFDF5;
+  border-color: #a7f3d0;
+  font-weight: 600;
+}
+
+.mapStatusOut {
+  color: #991B1B;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.mapStatusError {
+  color: #92400E;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+/* ─── Bottom card buttons ────────────────────────────── */
+.clockInBtn {
+  width: 100%;
+  padding: 0.9rem;
+  border-radius: 1rem;
+  border: none;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: linear-gradient(135deg, #059669 0%, #10B981 100%);
+  box-shadow: 0 6px 20px rgba(5, 150, 105, 0.35);
+  cursor: pointer;
+  transition: all 0.25s ease;
+  letter-spacing: -0.01em;
+}
+
+.clockInBtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 28px rgba(5, 150, 105, 0.45);
+}
+
+.clockInBtn:active {
+  transform: scale(0.97);
+}
+
+.retryBtn {
+  width: 100%;
+  padding: 0.85rem;
+  border-radius: 1rem;
+  border: 1.5px solid #e2e8f0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #475569;
+  background: #ffffff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.retryBtn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.retryBtn:active {
+  transform: scale(0.97);
+}
+
+.checkingBtn {
+  width: 100%;
+  padding: 0.85rem;
+  border-radius: 1rem;
+  border: none;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #94A3B8;
+  background: #f1f5f9;
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    Responsive Breakpoints
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* Tiny phones (SE, 5, Galaxy S mini) — 320-374px */
+/* Tiny phones (320-374px) */
 @media (max-width: 374px) {
   .header {
     padding: 0.6rem 0.75rem;
@@ -842,91 +788,35 @@
     font-size: 0.6rem;
   }
   .body {
-    padding: 0.75rem;
+    padding: 0.85rem;
     gap: 0.6rem;
   }
-  .statusCard {
-    padding: 0.75rem;
-    gap: 0.5rem;
+  .welcomeHeading {
+    font-size: 1.25rem;
   }
-  .fingerprintWrap {
-    width: 80px;
-    height: 80px;
+  .markBtn {
+    padding: 0.75rem 0.85rem;
   }
-  .fingerprintCircle {
-    width: 64px;
-    height: 64px;
+  .markBtnTitle {
+    font-size: 0.82rem;
   }
-  .fingerprintSvg {
-    width: 30px;
-    height: 30px;
-  }
-  .statusTitle {
-    font-size: 0.9rem;
-  }
-  .statusSub {
-    font-size: 0.6rem;
-  }
-  .statsRow {
-    gap: 0.4rem;
-  }
-  .statBox {
-    padding: 0.4rem 0.25rem;
-  }
-  .statIcon {
-    width: 26px;
-    height: 26px;
-  }
-  .statValue {
-    font-size: 0.7rem;
-  }
-  .statLabel {
-    font-size: 0.5rem;
-  }
-  .primaryBtn {
-    padding: 0.75rem;
-    font-size: 0.8rem;
-  }
-  .mapPreview,
-  .realMap {
-    height: 130px;
+  .mapBottomCard {
+    padding: 1rem;
   }
 }
 
-/* Standard phones (375-413px) — default sizing, no overrides needed */
-
-/* Large phones (414px+, Pro Max, Galaxy S Ultra) */
+/* Large phones (414px+) */
 @media (min-width: 414px) {
   .body {
-    padding: 1.25rem;
-    gap: 0.875rem;
-  }
-  .statusCard {
-    padding: 1.25rem;
+    padding: 1.5rem;
     gap: 1rem;
   }
-  .fingerprintWrap {
-    width: 110px;
-    height: 110px;
-  }
-  .fingerprintCircle {
-    width: 88px;
-    height: 88px;
-  }
-  .fingerprintSvg {
-    width: 42px;
-    height: 42px;
-  }
-  .statusTitle {
-    font-size: 1.15rem;
-  }
-  .mapPreview,
-  .realMap {
-    height: 180px;
+  .welcomeHeading {
+    font-size: 1.65rem;
   }
 }
 
-/* Tablet / desktop — center and constrain the card */
+/* Tablet / desktop — constrain width */
 @media (min-width: 600px) {
   .page {
     align-items: center;
@@ -940,34 +830,15 @@
     box-shadow: 0 24px 64px rgba(0, 0, 0, 0.12),
                 0 4px 16px rgba(0, 0, 0, 0.06);
   }
-}
-
-/* Short phones (landscape or <680px height) — tighten vertical spacing */
-@media (max-height: 680px) {
-  .fingerprintWrap {
-    width: 80px;
-    height: 80px;
+  .mapPage {
+    position: relative;
+    min-height: 100dvh;
   }
-  .fingerprintCircle {
-    width: 64px;
-    height: 64px;
-  }
-  .fingerprintSvg {
-    width: 30px;
-    height: 30px;
-  }
-  .statusCard {
-    padding: 0.75rem;
-    gap: 0.5rem;
-  }
-  .body {
-    gap: 0.5rem;
-  }
-  .mapPreview,
-  .realMap {
-    height: 120px;
-  }
-  .statsRow {
-    gap: 0.4rem;
+  .mapBottomCard {
+    max-width: 420px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 1.25rem;
+    margin-bottom: 1rem;
   }
 }
