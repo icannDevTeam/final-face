@@ -1,5 +1,5 @@
-const CACHE_NAME = 'binus-attendance-v9';
-const STATIC_CACHE = 'binus-static-v9';
+const CACHE_NAME = 'binus-attendance-v10';
+const STATIC_CACHE = 'binus-static-v10';
 const MODEL_CACHE = 'binus-models-v1';   // ML models rarely change — long-lived
 
 const PRECACHE_URLS = [
