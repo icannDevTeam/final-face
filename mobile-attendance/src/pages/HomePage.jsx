@@ -362,6 +362,7 @@ export default function HomePage() {
             userLng={gpsData.lng}
             inRange={gpsData.inRange}
             geofence={geofenceType}
+            fullScreen
           />
         ) : (
           <div className={styles.mapLoading}>
