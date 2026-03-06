@@ -30,3 +30,4 @@ api_testing/
 
 # OS
 .DS_Store
+mobile-attendance/src/components/settings.json

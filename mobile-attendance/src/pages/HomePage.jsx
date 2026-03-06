@@ -14,152 +14,6 @@ const STATUS = {
   ERROR: 'error',
 };
 
-// ─── Pulse rings ─────────────────────────────────────────────────────
-
-function PulseRing({ status }) {
-  return (
-    <div className={styles.fingerprintWrap} style={{ position: 'absolute', inset: 0 }}>
-      {[0, 1, 2].map((i) => (
-        <div
-          key={i}
-          className={`${styles.pulseRing} ${styles[status]}`}
-          style={{
-            width: `${80 + i * 30}%`,
-            height: `${80 + i * 30}%`,
-            opacity: 0.15 - i * 0.04,
-            animationDelay: `${i * 0.4}s`,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-// ─── Fingerprint icon ────────────────────────────────────────────────
-
-function FingerprintIcon({ status }) {
-  const isChecking = status === STATUS.CHECKING;
-
-  return (
-    <div className={styles.fingerprintWrap}>
-      <PulseRing status={status} />
-      <div className={`${styles.fingerprintCircle} ${styles[status]}`}>
-        <svg className={styles.fingerprintSvg} viewBox="0 0 44 44" fill="none">
-          <path d="M22 8C14.268 8 8 14.268 8 22" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
-          <path d="M22 8C29.732 8 36 14.268 36 22" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
-          <path d="M14 22C14 17.582 17.582 14 22 14C26.418 14 30 17.582 30 22C30 26.418 26.418 30 22 30" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
-          <path d="M22 14C22 14 22 22 22 26C22 28.209 20.209 30 18 30" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
-          <path d="M26 20C26 17.791 24.209 16 22 16" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
-          <path d="M18 22C18 19.791 19.791 18 22 18C24.209 18 26 19.791 26 22C26 24.209 24.209 26 22 26" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
-          <circle cx="22" cy="22" r="2" fill="white" />
-          {isChecking && (
-            <circle
-              className={styles.spinnerRing}
-              cx="22" cy="22" r="18"
-              stroke="white" strokeWidth="2"
-              strokeDasharray="28 84"
-              strokeLinecap="round"
-            />
-          )}
-        </svg>
-      </div>
-    </div>
-  );
-}
-
-// ─── Static map preview ──────────────────────────────────────────────
-
-function MapPreview({ status, distance, accuracy, geofence, campusName }) {
-  const isOut = status === STATUS.OUT || status === STATUS.ERROR;
-  const safeCampusName = campusName || 'Campus';
-
-  const circleColor = isOut ? 'rgba(153,27,27,0.2)' : 'rgba(0,84,166,0.2)';
-  const strokeColor = isOut ? '#991B1B' : '#0054A6';
-  const lineColor   = isOut ? '#991B1B' : '#0054A6';
-
-  const distText = distance != null
-    ? distance >= 1000
-      ? `📍 ${(distance / 1000).toFixed(1)} km away`
-      : `📍 ${distance}m away`
-    : '📍 Measuring…';
-  const zoneText = geofence === 'polygon'
-    ? (isOut ? `Outside ${safeCampusName} zone` : `${safeCampusName} zone locked`)
-    : null;
-
-  return (
-    <div className={styles.mapPreview}>
-      {/* Fake map grid */}
-      <svg className={styles.mapGrid}>
-        {[...Array(8)].map((_, i) => (
-          <line key={`h${i}`} x1="0" y1={i * 28} x2="100%" y2={i * 28} stroke="#94a3b8" strokeWidth="0.5" />
-        ))}
-        {[...Array(12)].map((_, i) => (
-          <line key={`v${i}`} x1={i * 32} y1="0" x2={i * 32} y2="100%" stroke="#94a3b8" strokeWidth="0.5" />
-        ))}
-        {/* Fake roads */}
-        <path d="M0,80 Q120,70 200,100 T400,90" stroke="#c8d6e5" strokeWidth="3" fill="none" />
-        <path d="M0,130 Q150,120 300,140 T450,130" stroke="#c8d6e5" strokeWidth="3" fill="none" />
-        <path d="M160,0 Q170,80 155,200" stroke="#c8d6e5" strokeWidth="3" fill="none" />
-        <path d="M280,0 Q290,100 275,200" stroke="#b8cfe0" strokeWidth="5" fill="none" />
-      </svg>
-
-      {/* Radius circle */}
-      <div
-        className={styles.radiusCircle}
-        style={{
-          width: 110,
-          height: 110,
-          background: circleColor,
-          borderColor: strokeColor,
-        }}
-      />
-
-      {/* Line to user */}
-      <svg className={styles.lineToUser}>
-        <line
-          x1="44%" y1="38%"
-          x2={isOut ? '72%' : '58%'}
-          y2={isOut ? '68%' : '55%'}
-          stroke={lineColor}
-          strokeWidth="2"
-          strokeDasharray="4 3"
-        />
-      </svg>
-
-      {/* Campus pin with BINUS logo */}
-      <div className={styles.campusPin}>
-        <div className={styles.campusPinLabel}>
-          <img src="/logo.jpe" alt="BINUS" className={styles.campusPinLogo} />
-          BINUS
-        </div>
-        <div className={styles.campusPinStem} />
-        <div className={styles.campusPinDot} />
-      </div>
-
-      {/* User pin */}
-      <div
-        className={styles.userPin}
-        style={{
-          top: isOut ? '62%' : '50%',
-          left: isOut ? '68%' : '55%',
-        }}
-      />
-
-      {/* Distance label */}
-      <div className={`${styles.distLabel} ${isOut ? styles.out : styles.in}`}>
-        {geofence === 'polygon'
-            ? zoneText || distText
-          : (!isOut ? '📍 Within range' : distText)}
-      </div>
-
-      {/* Accuracy badge */}
-      {accuracy != null && (
-        <div className={styles.accBadge}>±{accuracy}m accuracy</div>
-      )}
-    </div>
-  );
-}
-
 // ─── BINUS Spirit Values ticker ──────────────────────────────────────
 
 const SPIRIT_VALUES = [
@@ -182,7 +36,6 @@ function SpiritTicker() {
       </div>
       <div className={styles.tickerTrack}>
         <div className={styles.tickerScroll}>
-          {/* Double the items for seamless loop */}
           {[...SPIRIT_VALUES, ...SPIRIT_VALUES].map((v, i) => (
             <span key={i} className={styles.tickerItem}>
               <span className={styles.tickerLetter}>{v.short}</span>
@@ -202,12 +55,15 @@ function SpiritTicker() {
 export default function HomePage() {
   const navigate = useNavigate();
 
+  // view: 'dashboard' → clean splash,  'map' → full-screen map + GPS
+  const [view, setView]           = useState('dashboard');
   const [status, setStatus]       = useState(STATUS.CHECKING);
-  const [gpsData, setGpsData]     = useState(null);      // { inRange, distance, accuracy, lat, lng, campusRadius }
+  const [gpsData, setGpsData]     = useState(null);
   const [gpsError, setGpsError]   = useState(null);
-  const [mapExpanded, setMapExpanded] = useState(false);
-  const [useLiveMap, setUseLiveMap]   = useState(false);
-  const [clock, setClock]         = useState(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+  const [mapReady, setMapReady]   = useState(false);
+  const [clock, setClock]         = useState(() =>
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  );
 
   // Attendance log state
   const [attendanceLog, setAttendanceLog] = useState([]);
@@ -219,22 +75,19 @@ export default function HomePage() {
 
   // ── Today's formatted date ────────────────────────────
   const todayDate = new Date().toLocaleDateString('en-US', {
-    weekday: 'short',
+    weekday: 'long',
     day: '2-digit',
-    month: 'short',
+    month: 'long',
     year: 'numeric',
   });
 
   // ── Load last clock-in from localStorage & fetch history ─
   useEffect(() => {
-    // Last clock-in from localStorage
     try {
       const raw = localStorage.getItem('lastClockIn');
       if (raw) {
         const parsed = JSON.parse(raw);
         setLastClockIn(parsed);
-
-        // Fetch attendance history for this student
         if (parsed.studentId) {
           setLogLoading(true);
           getAttendanceHistory(parsed.studentId, 7)
@@ -254,10 +107,12 @@ export default function HomePage() {
     return () => clearInterval(id);
   }, []);
 
-  // ── Initial proximity check + continuous watch ──────────
-  // watchProximity fires immediately on first position, so we
-  // combine both into one effect to avoid double GPS reads.
+  // ── GPS watch — only active when view === 'map' ────────
   useEffect(() => {
+    if (view !== 'map') return;
+
+    setStatus(STATUS.CHECKING);
+    setGpsError(null);
     let initialDone = false;
 
     const stop = watchProximity(
@@ -270,11 +125,11 @@ export default function HomePage() {
       (errMsg) => {
         setGpsError(errMsg);
         if (!initialDone) setStatus(STATUS.ERROR);
-      }
+      },
     );
     cleanupRef.current = stop;
 
-    // Fallback: if watchProximity hasn't fired in 5s, do a one-shot
+    // Fallback one-shot after 5 s
     const fallback = setTimeout(() => {
       if (!initialDone) {
         checkProximity()
@@ -294,55 +149,63 @@ export default function HomePage() {
       stop();
       clearTimeout(fallback);
     };
-  }, []);
+  }, [view]);
 
-  // ── Lazy-load LiveMap when map expands ─────────────────
-  const handleMapToggle = useCallback(async () => {
-    const next = !mapExpanded;
-    setMapExpanded(next);
-
-    if (next && !LiveMapComponent) {
+  // ── Lazy-load LiveMap when entering map view ───────────
+  useEffect(() => {
+    if (view !== 'map' || LiveMapComponent) {
+      if (LiveMapComponent) setMapReady(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
       try {
         const mod = await import('../components/LiveMap');
-        LiveMapComponent = mod.default;
-        setUseLiveMap(true);
+        if (!cancelled) {
+          LiveMapComponent = mod.default;
+          setMapReady(true);
+        }
       } catch {
-        // Leaflet load failed — fall back to static preview
-        setUseLiveMap(false);
+        if (!cancelled) setMapReady(false);
       }
-    }
-  }, [mapExpanded]);
+    })();
+    return () => { cancelled = true; };
+  }, [view]);
 
-  // ── Navigate to face scan ──────────────────────────────
-  const handlePrimaryAction = useCallback(() => {
-    if (status === STATUS.CHECKING) return;
+  // ── Handlers ───────────────────────────────────────────
+  const handleMarkAttendance = useCallback(() => setView('map'), []);
 
-    if (status === STATUS.IN) {
-      navigate('/scan');
-    } else {
-      // Re-check proximity
-      setStatus(STATUS.CHECKING);
-      setGpsError(null);
-      checkProximity()
-        .then((data) => {
-          setGpsData(data);
-          setStatus(data.inRange ? STATUS.IN : STATUS.OUT);
-        })
-        .catch((err) => {
-          setGpsError(err.message);
-          setStatus(STATUS.ERROR);
-        });
-    }
+  const handleBack = useCallback(() => {
+    if (cleanupRef.current) { cleanupRef.current(); cleanupRef.current = null; }
+    setView('dashboard');
+  }, []);
+
+  const handleClockIn = useCallback(() => {
+    if (status !== STATUS.IN) return;
+    navigate('/scan');
   }, [status, navigate]);
 
-  // ── Derived display values ─────────────────────────────
+  const handleRetry = useCallback(() => {
+    setStatus(STATUS.CHECKING);
+    setGpsError(null);
+    checkProximity()
+      .then((data) => {
+        setGpsData(data);
+        setStatus(data.inRange ? STATUS.IN : STATUS.OUT);
+      })
+      .catch((err) => {
+        setGpsError(err.message);
+        setStatus(STATUS.ERROR);
+      });
+  }, []);
+
+  // ── Derived values ─────────────────────────────────────
   const isChecking = status === STATUS.CHECKING;
-  const isError    = status === STATUS.ERROR;
-  const isOut      = status === STATUS.OUT;
   const isIn       = status === STATUS.IN;
+  const isOut      = status === STATUS.OUT;
+  const isError    = status === STATUS.ERROR;
 
   const geofenceType = gpsData?.geofence || campusCfg.geofence;
-  const campusName = gpsData?.campusName || campusCfg.name;
 
   const distDisplay = gpsData
     ? gpsData.distance >= 1000
@@ -350,246 +213,236 @@ export default function HomePage() {
       : `${gpsData.distance} m`
     : '—';
 
-  const radiusDisplay = gpsData
-    ? gpsData.campusRadius >= 1000
-      ? `${(gpsData.campusRadius / 1000).toFixed(1)} km`
-      : `${gpsData.campusRadius} m`
-    : `${campusCfg.radius} m`;
+  const accDisplay = gpsData ? `±${gpsData.accuracy} m` : null;
 
-  const zoneLabel = geofenceType === 'polygon' ? 'Attendance Zone' : 'Allowed Radius';
-  const zoneValue = geofenceType === 'polygon' ? campusName : radiusDisplay;
+  const todayClockIn = lastClockIn?.date === new Date().toISOString().slice(0, 10) ? lastClockIn : null;
 
-  const accDisplay = gpsData ? `±${gpsData.accuracy} m` : '—';
+  const welcomeName = lastClockIn?.name?.split(' ')[0] || null;
 
-  const statusLabel = isChecking
-    ? 'Checking…'
-    : isError
-    ? 'GPS error'
-    : isOut
-    ? 'Out of range'
-    : 'In range';
-
-  const titleText = isChecking
-    ? 'Detecting Location…'
-    : isError
-    ? 'Location Unavailable'
-    : isOut
-    ? 'Out of Attendance Zone'
-    : 'Within Attendance Zone';
-
-  const subText = isChecking
-    ? 'Please wait while we check your GPS position'
-    : isError
-    ? gpsError || 'Enable location services and try again'
-    : isOut
-    ? 'Move closer to campus to mark attendance'
-    : 'You\'re within the allowed area. Ready to check in!';
-
-  const btnText = isChecking
-    ? 'Checking location…'
-    : isIn
-    ? '✓ Mark Attendance'
-    : 'Check Again';
-
-  return (
-    <div className={styles.page}>
-      <div className={styles.card}>
-        {/* ── Header ───────────────────────────────────── */}
-        <div className={styles.header}>
-          <div className={styles.headerLeft}>
-            <div className={styles.logoBox}>
-              <img src="/logo.jpe" alt="BINUS" className={styles.logoImg} />
-            </div>
-            <div>
-              <p className={styles.headerTitle}>BINUS Attendance</p>
-              <p className={styles.headerTime}>{clock}</p>
-            </div>
-          </div>
-
-          <div className={`${styles.statusBadge} ${styles[status]}`}>
-            <div className={`${styles.statusDot} ${styles[status]}`} />
-            {statusLabel}
-          </div>
-        </div>
-
-        {/* ── Body ─────────────────────────────────────── */}
-        <div className={styles.body}>
-          {/* Status card */}
-          <div className={`${styles.statusCard} ${styles[status]}`}>
-            <FingerprintIcon status={status} />
-
-            <div className={styles.statusTextWrap} key={status}>
-              <h2 className={`${styles.statusTitle} ${styles[status]}`}>{titleText}</h2>
-              <p className={styles.statusSub}>{subText}</p>
-            </div>
-
-            {/* Stats row */}
-            <div className={styles.statsRow}>
-              <div className={styles.statBox}>
-                <div className={styles.statIcon}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1 1 16 0Z" />
-                    <circle cx="12" cy="10" r="3" />
-                  </svg>
-                </div>
-                <div className={styles.statValue}>{distDisplay}</div>
-                <div className={styles.statLabel}>Distance</div>
+  // ═══════════════════════════════════════════════════════
+  //  Dashboard view — splash / home
+  // ═══════════════════════════════════════════════════════
+  if (view === 'dashboard') {
+    return (
+      <div className={styles.page}>
+        <div className={styles.card}>
+          {/* ── Header ─────────────────────────────────── */}
+          <div className={styles.header}>
+            <div className={styles.headerLeft}>
+              <div className={styles.logoBox}>
+                <img src="/logo.jpe" alt="BINUS" className={styles.logoImg} />
               </div>
-              <div className={styles.statBox}>
-                <div className={styles.statIcon}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4Z" />
-                    <circle cx="12" cy="11" r="2" />
-                  </svg>
-                </div>
-                <div className={styles.statValue}>{zoneValue}</div>
-                <div className={styles.statLabel}>{zoneLabel}</div>
-              </div>
-              <div className={styles.statBox}>
-                <div className={styles.statIcon}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <circle cx="12" cy="12" r="6" />
-                    <circle cx="12" cy="12" r="2" />
-                  </svg>
-                </div>
-                <div className={styles.statValue}>{accDisplay}</div>
-                <div className={styles.statLabel}>GPS Accuracy</div>
+              <div>
+                <p className={styles.headerTitle}>BINUS Attendance</p>
+                <p className={styles.headerTime}>{clock}</p>
               </div>
             </div>
-          </div>
-
-          {/* Map toggle */}
-          <button className={styles.mapToggle} onClick={handleMapToggle}>
-            <div className={styles.mapToggleLeft}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21" />
-                <line x1="9" y1="3" x2="9" y2="18" />
-                <line x1="15" y1="6" x2="15" y2="21" />
-              </svg>
-              <span>View Map</span>
-            </div>
-            <span className={`${styles.mapChevron} ${mapExpanded ? styles.open : ''}`}>▾</span>
-          </button>
-
-          {/* Map content */}
-          {mapExpanded && (
-            <div className={styles.mapSlideUp}>
-              {useLiveMap && LiveMapComponent && gpsData ? (
-                <div className={styles.realMap}>
-                  <LiveMapComponent
-                    campusLat={campusCfg.lat}
-                    campusLng={campusCfg.lng}
-                    campusRadius={campusCfg.radius}
-                    campusPolygon={gpsData?.polygon || campusCfg.polygon}
-                    userLat={gpsData.lat}
-                    userLng={gpsData.lng}
-                    inRange={gpsData.inRange}
-                    geofence={geofenceType}
-                  />
-                </div>
-              ) : (
-                <MapPreview
-                  status={status}
-                  distance={gpsData?.distance}
-                  accuracy={gpsData?.accuracy}
-                  geofence={geofenceType}
-                  campusName={campusName}
-                />
-              )}
-            </div>
-          )}
-
-          {/* Primary action button */}
-          <button
-            className={`${styles.primaryBtn} ${styles[status]}`}
-            onClick={handlePrimaryAction}
-            disabled={isChecking}
-          >
-            {btnText}
-          </button>
-
-          {/* Success banner */}
-          {isIn && !isChecking && (
-            <div className={styles.successBanner}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{display:'inline',verticalAlign:'middle',marginRight:4}}>
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                <polyline points="22 4 12 14.01 9 11.01" />
-              </svg>
-              Inside attendance zone · System verified
-            </div>
-          )}
-
-          {/* Error detail */}
-          {isError && gpsError && (
-            <div className={styles.errorDetail}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{display:'inline',verticalAlign:'middle',marginRight:4}}>
-                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                <line x1="12" y1="9" x2="12" y2="13" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-              {gpsError}
-            </div>
-          )}
-
-          {/* ── Today's date + Attendance section ──────── */}
-          <div className={styles.dateSection}>
-            <span className={styles.dateText}>{todayDate}</span>
-            <span className={styles.dateBadge}>Today</span>
-          </div>
-
-          {/* Live attendance card */}
-          {lastClockIn && lastClockIn.date === new Date().toISOString().slice(0, 10) && (
-            <div className={styles.liveCard}>
-              <div className={styles.liveHeader}>
-                <div className={styles.liveDot} />
-                <span>Live attendance</span>
+            {todayClockIn && (
+              <div className={`${styles.statusBadge} ${styles.in}`}>
+                <div className={`${styles.statusDot} ${styles.in}`} />
+                Clocked in
               </div>
-              <div className={styles.liveBody}>
-                <div className={styles.liveInfo}>
-                  <p className={styles.liveName}>{lastClockIn.name}</p>
-                  <p className={styles.liveMeta}>{lastClockIn.homeroom}</p>
+            )}
+          </div>
+
+          {/* ── Body ───────────────────────────────────── */}
+          <div className={styles.body}>
+            {/* Welcome + date */}
+            <div className={styles.welcomeSection}>
+              <p className={styles.welcomeDate}>{todayDate}</p>
+              <h1 className={styles.welcomeHeading}>
+                {welcomeName ? `Welcome, ${welcomeName}` : "Today's Summary"}
+              </h1>
+            </div>
+
+            {/* Today's clock-in card */}
+            <div className={styles.summaryCard}>
+              <div className={styles.summaryRow}>
+                <div className={styles.summaryItem}>
+                  <span className={styles.summaryLabel}>Clock In</span>
+                  <span className={styles.summaryValue}>{todayClockIn?.timestamp || '—  —'}</span>
                 </div>
-                <div className={styles.liveTime}>
-                  <span className={`${styles.liveStatus} ${lastClockIn.status === 'Late' ? styles.liveStatusLate : ''}`}>
-                    {lastClockIn.status}
+                <div className={styles.summaryDivider} />
+                <div className={styles.summaryItem}>
+                  <span className={styles.summaryLabel}>Status</span>
+                  <span className={`${styles.summaryValue} ${todayClockIn?.status === 'Late' ? styles.summaryLate : ''}`}>
+                    {todayClockIn?.status || '—  —'}
                   </span>
-                  <span className={styles.liveTimestamp}>{lastClockIn.timestamp}</span>
                 </div>
               </div>
             </div>
-          )}
 
-          {/* Attendance log */}
-          {attendanceLog.length > 0 && (
-            <div className={styles.logSection}>
-              <div className={styles.logHeader}>
-                <span className={styles.logTitle}>Attendance log</span>
-                <span className={styles.logCount}>{attendanceLog.length} days</span>
+            {/* Mark Attendance CTA */}
+            <button className={styles.markBtn} onClick={handleMarkAttendance}>
+              <div className={styles.markBtnIcon}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1 1 16 0Z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
               </div>
-              <div className={styles.logList}>
-                {attendanceLog.map((entry) => (
-                  <div key={entry.date} className={styles.logEntry}>
-                    <div className={styles.logDate}>
-                      {new Date(entry.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short' })}
+              <div className={styles.markBtnText}>
+                <span className={styles.markBtnTitle}>
+                  {todayClockIn ? 'View Location' : 'Mark Attendance'}
+                </span>
+                <span className={styles.markBtnSub}>Open map &amp; verify GPS location</span>
+              </div>
+              <svg className={styles.markBtnChevron} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 18l6-6-6-6" />
+              </svg>
+            </button>
+
+            {/* Attendance log */}
+            {(attendanceLog.length > 0 || logLoading) && (
+              <div className={styles.logSection}>
+                <div className={styles.logHeader}>
+                  <span className={styles.logTitle}>Attendance Log</span>
+                  <span className={styles.logCount}>{attendanceLog.length} days</span>
+                </div>
+                {/* Table header */}
+                <div className={`${styles.logEntry} ${styles.logTableHead}`}>
+                  <div className={styles.logDate}>Date</div>
+                  <div className={styles.logTime}>Clock In</div>
+                  <span className={styles.logStatus}>Status</span>
+                </div>
+                <div className={styles.logList}>
+                  {attendanceLog.map((entry) => (
+                    <div key={entry.date} className={styles.logEntry}>
+                      <div className={styles.logDate}>
+                        {new Date(entry.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short' })}
+                      </div>
+                      <div className={styles.logTime}>{entry.startTime}</div>
+                      <span className={`${styles.logStatus} ${entry.late ? styles.logStatusLate : ''}`}>
+                        {entry.status}
+                      </span>
                     </div>
-                    <div className={styles.logTime}>{entry.startTime}</div>
-                    <span className={`${styles.logStatus} ${entry.late ? styles.logStatusLate : ''}`}>
-                      {entry.status}
-                    </span>
-                  </div>
-                ))}
+                  ))}
+                </div>
+                {logLoading && <p className={styles.logLoading}>Loading…</p>}
               </div>
-              {logLoading && <p className={styles.logLoading}>Loading…</p>}
+            )}
+
+            {/* Spirit ticker */}
+            <SpiritTicker />
+
+            <p className={styles.copyright}>© 2026 AI Club · BINUS School Simprug</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  Map view — full-screen map + floating bottom card
+  // ═══════════════════════════════════════════════════════
+  return (
+    <div className={styles.mapPage}>
+      {/* Floating header */}
+      <div className={styles.mapHeader}>
+        <button className={styles.mapBackBtn} onClick={handleBack}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
+        <span className={styles.mapHeaderTitle}>Mark Attendance</span>
+        <div className={`${styles.mapHeaderBadge} ${styles[status]}`}>
+          <div className={`${styles.statusDot} ${styles[status]}`} />
+          {isChecking ? 'Checking…' : isIn ? 'In range' : isOut ? 'Out of range' : 'Error'}
+        </div>
+      </div>
+
+      {/* Full-screen map */}
+      <div className={styles.mapFull}>
+        {mapReady && LiveMapComponent && gpsData ? (
+          <LiveMapComponent
+            campusLat={campusCfg.lat}
+            campusLng={campusCfg.lng}
+            campusRadius={campusCfg.radius}
+            campusPolygon={gpsData?.polygon || campusCfg.polygon}
+            userLat={gpsData.lat}
+            userLng={gpsData.lng}
+            inRange={gpsData.inRange}
+            geofence={geofenceType}
+          />
+        ) : (
+          <div className={styles.mapLoading}>
+            <div className={styles.mapSpinner} />
+            <p>Loading map…</p>
+          </div>
+        )}
+      </div>
+
+      {/* Floating bottom card */}
+      <div className={styles.mapBottomCard}>
+        {/* Location info */}
+        <div className={styles.mapInfoRow}>
+          <div className={styles.mapInfoItem}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1 1 16 0Z" />
+              <circle cx="12" cy="10" r="3" />
+            </svg>
+            <div>
+              <span className={styles.mapInfoLabel}>Distance</span>
+              <span className={styles.mapInfoValue}>{distDisplay}</span>
+            </div>
+          </div>
+          {accDisplay && (
+            <div className={styles.mapInfoItem}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <circle cx="12" cy="12" r="6" />
+                <circle cx="12" cy="12" r="2" />
+              </svg>
+              <div>
+                <span className={styles.mapInfoLabel}>Accuracy</span>
+                <span className={styles.mapInfoValue}>{accDisplay}</span>
+              </div>
             </div>
           )}
-
-          {/* BINUS Spirit Values Ticker */}
-          <SpiritTicker />
-
-          {/* Copyright */}
-          <p className={styles.copyright}>© 2026 AI Club · BINUS School Simprug</p>
         </div>
+
+        {/* Status message */}
+        {isChecking && (
+          <p className={styles.mapStatusMsg}>
+            <span className={styles.mapSpinnerInline} /> Verifying your location…
+          </p>
+        )}
+        {isIn && (
+          <p className={`${styles.mapStatusMsg} ${styles.mapStatusIn}`}>
+            ✓ You are within the attendance zone
+          </p>
+        )}
+        {isOut && (
+          <p className={`${styles.mapStatusMsg} ${styles.mapStatusOut}`}>
+            You are outside the attendance zone ({distDisplay} away)
+          </p>
+        )}
+        {isError && (
+          <p className={`${styles.mapStatusMsg} ${styles.mapStatusError}`}>
+            {gpsError || 'Unable to determine your location'}
+          </p>
+        )}
+
+        {/* Action button */}
+        {isIn && (
+          <button className={styles.clockInBtn} onClick={handleClockIn}>
+            Clock In
+          </button>
+        )}
+        {isOut && (
+          <button className={styles.retryBtn} onClick={handleRetry}>
+            Retry Location
+          </button>
+        )}
+        {isError && (
+          <button className={styles.retryBtn} onClick={handleRetry}>
+            Try Again
+          </button>
+        )}
+        {isChecking && (
+          <button className={styles.checkingBtn} disabled>
+            <span className={styles.mapSpinnerInline} /> Checking…
+          </button>
+        )}
       </div>
     </div>
   );
