@@ -1,0 +1,3 @@
+[submodule "web-dataset-collector"]
+	path = web-dataset-collector
+	url = https://github.com/icannDevTeam/dataset.git

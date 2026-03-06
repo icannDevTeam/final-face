@@ -1,33 +1,47 @@
-# Vite cache
-.vite/
+# ──────────────────────────────────────
+# Backend (Python)
+# ──────────────────────────────────────
 
 # Large model files
 *.dat
 *.pickle
-*.log
 
 # Face datasets (stored in Firebase)
-face_dataset/
+backend/face_dataset/
 
-# Attendance data (generated)
-data/
+# Attendance data (generated at runtime)
+backend/data/
 
 # Python cache
 __pycache__/
 *.pyc
 
-# Backups
-*.json.bak
+# Captured faces (runtime)
+backend/captured_faces/
 
-# Secrets
+# API testing data (contains PII)
+backend/api_testing/
+
+# Logs
+*.log
+
+# ──────────────────────────────────────
+# Secrets & Environment
+# ──────────────────────────────────────
 facial-attendance-binus-firebase-adminsdk.json
 .env
 .env.local
 
-# Docs with sensitive info (endpoints, credentials, PII)
-DOCS.md
-api_testing/
+# ──────────────────────────────────────
+# Frontend / Vite / Node
+# ──────────────────────────────────────
+.vite/
+node_modules/
 
-# OS
+# ──────────────────────────────────────
+# Misc
+# ──────────────────────────────────────
+*.json.bak
+DOCS.md
 .DS_Store
 mobile-attendance/src/components/settings.json
