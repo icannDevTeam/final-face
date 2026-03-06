@@ -110,6 +110,7 @@ export default function LiveMap({
   userLng,
   inRange,
   geofence,
+  fullScreen = false,
 }) {
   const campusPos = { lat: campusLat, lng: campusLng };
   const userPos = userLat != null && userLng != null ? { lat: userLat, lng: userLng } : null;
@@ -117,6 +118,64 @@ export default function LiveMap({
   const zoneColor = inRange ? '#10B981' : '#F59E0B';
   const zoneFill = inRange ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)';
 
+  const mapEl = (
+    <MapContainer
+      center={[campusLat, campusLng]}
+      zoom={fullScreen ? 17 : 16}
+      scrollWheelZoom={fullScreen}
+      dragging={true}
+      zoomControl={fullScreen}
+      attributionControl={false}
+      style={{ height: fullScreen ? '100%' : '200px', width: '100%' }}
+    >
+      <TileLayer
+        url={TILE_URL}
+        attribution={TILE_ATTRIBUTION}
+      />
+
+      {/* Geofence shape */}
+      {polygonPositions ? (
+        <Polygon
+          positions={polygonPositions}
+          pathOptions={{
+            color: zoneColor,
+            fillColor: zoneFill,
+            fillOpacity: 0.35,
+            weight: 2,
+          }}
+        />
+      ) : (
+        <Circle
+          center={[campusLat, campusLng]}
+          radius={campusRadius}
+          pathOptions={{
+            color: zoneColor,
+            fillColor: zoneFill,
+            fillOpacity: 0.25,
+            weight: 2,
+            dashArray: '8 5',
+          }}
+        />
+      )}
+
+      {/* Campus centre pin */}
+      <Marker position={[campusLat, campusLng]} icon={campusIcon} />
+
+      {/* Student live position */}
+      {userPos && (
+        <Marker position={[userPos.lat, userPos.lng]} icon={userIcon} />
+      )}
+
+      <MapAutoCenter userPos={userPos} campusPos={campusPos} campusPolygon={polygonPositions} />
+    </MapContainer>
+  );
+
+  // Full-screen mode: no card wrapper, just the raw map
+  if (fullScreen) {
+    return mapEl;
+  }
+
+  // Card mode: wrapped with label header
   return (
     <div style={{
       borderRadius: 'var(--radius-2xl, 2rem)',
@@ -160,55 +219,7 @@ export default function LiveMap({
           </span>
         )}
       </div>
-      <MapContainer
-        center={[campusLat, campusLng]}
-        zoom={16}
-        scrollWheelZoom={false}
-        dragging={true}
-        zoomControl={false}
-        attributionControl={false}
-        style={{ height: '200px', width: '100%' }}
-      >
-        <TileLayer
-          url={TILE_URL}
-          attribution={TILE_ATTRIBUTION}
-        />
-
-        {/* Geofence shape */}
-        {polygonPositions ? (
-          <Polygon
-            positions={polygonPositions}
-            pathOptions={{
-              color: zoneColor,
-              fillColor: zoneFill,
-              fillOpacity: 0.35,
-              weight: 2,
-            }}
-          />
-        ) : (
-          <Circle
-            center={[campusLat, campusLng]}
-            radius={campusRadius}
-            pathOptions={{
-              color: zoneColor,
-              fillColor: zoneFill,
-              fillOpacity: 0.25,
-              weight: 2,
-              dashArray: '8 5',
-            }}
-          />
-        )}
-
-        {/* Campus centre pin */}
-        <Marker position={[campusLat, campusLng]} icon={campusIcon} />
-
-        {/* Student live position */}
-        {userPos && (
-          <Marker position={[userPos.lat, userPos.lng]} icon={userIcon} />
-        )}
-
-        <MapAutoCenter userPos={userPos} campusPos={campusPos} campusPolygon={polygonPositions} />
-      </MapContainer>
+      {mapEl}
     </div>
   );
 }
