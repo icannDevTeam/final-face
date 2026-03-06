@@ -339,8 +339,8 @@ export default function LiveMap({
   const campusPos = { lat: campusLat, lng: campusLng };
   const userPos = userLat != null && userLng != null ? { lat: userLat, lng: userLng } : null;
   const polygonPositions = campusPolygon?.length ? campusPolygon : null;
-  const zoneColor = inRange ? '#10B981' : '#F59E0B';
-  const zoneFill = inRange ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)';
+  const zoneColor = '#0054A6';
+  const zoneFill = 'rgba(0,84,166,0.10)';
   const userMarkerIcon = useMemo(() => makeUserIcon(inRange), [inRange]);
 
   const mapEl = (
