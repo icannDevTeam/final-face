@@ -19,6 +19,7 @@
 import { memGet, memSet, TTL } from './cache';
 import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
 import { point } from '@turf/helpers';
+import buffer from '@turf/buffer';
 import campusPolygonFeature from '../config/campusPolygon.json';
 
 // ─── Campus coordinates (BINUS School Simprug) ───────────────────────
@@ -27,6 +28,16 @@ const CAMPUS_LNG = parseFloat(import.meta.env.VITE_CAMPUS_LNG) || 106.7854;
 const CAMPUS_RADIUS_M = parseFloat(import.meta.env.VITE_CAMPUS_RADIUS) || 500; // metres
 const CAMPUS_POLYGON_FEATURE =
   campusPolygonFeature?.geometry?.coordinates?.length ? campusPolygonFeature : null;
+
+// Expand polygon by a safety buffer (metres) to account for GPS drift.
+// The raw polygon traces the fence; the buffered version adds ~25m padding
+// so a student standing just inside doesn't get marked "out of range"
+// due to GPS multipath/bounce from nearby buildings.
+const GPS_BUFFER_M = parseFloat(import.meta.env.VITE_GPS_BUFFER_M) || 25;
+const CAMPUS_POLYGON_BUFFERED = CAMPUS_POLYGON_FEATURE
+  ? buffer(CAMPUS_POLYGON_FEATURE, GPS_BUFFER_M, { units: 'meters' })
+  : null;
+
 const CAMPUS_POLYGON_COORDS = CAMPUS_POLYGON_FEATURE
   ? CAMPUS_POLYGON_FEATURE.geometry.coordinates.map((ring) =>
       ring.map(([lng, lat]) => [lat, lng])
@@ -35,9 +46,9 @@ const CAMPUS_POLYGON_COORDS = CAMPUS_POLYGON_FEATURE
 const CAMPUS_NAME = campusPolygonFeature?.properties?.name || 'Campus';
 
 // Accuracy thresholds (metres)
-const GOOD_ACCURACY_M   = 30;  // immediately accept a fix this accurate
-const MAX_GPS_ACCURACY_M = 150; // reject readings worse than this (anti-spoof)
-const SETTLE_TIME_MS     = 8_000; // how long to wait for a better fix
+const GOOD_ACCURACY_M   = 20;  // immediately accept a fix this accurate
+const MAX_GPS_ACCURACY_M = 100; // reject readings worse than this (anti-spoof)
+const SETTLE_TIME_MS     = 10_000; // how long to wait for a better fix
 
 // ─── Haversine distance (metres) ─────────────────────────────────────
 function haversineMetres(lat1, lon1, lat2, lon2) {
@@ -129,9 +140,11 @@ function getAccuratePosition() {
 }
 
 function isInsideCampusPolygon(lat, lng) {
-  if (!CAMPUS_POLYGON_FEATURE) return null;
+  if (!CAMPUS_POLYGON_BUFFERED) return null;
   try {
-    return booleanPointInPolygon(point([lng, lat]), CAMPUS_POLYGON_FEATURE, {
+    // Check against the BUFFERED polygon (original + 25m safety margin)
+    // so GPS drift near the boundary doesn't cause false "out of range"
+    return booleanPointInPolygon(point([lng, lat]), CAMPUS_POLYGON_BUFFERED, {
       ignoreBoundary: false,
     });
   } catch (err) {
