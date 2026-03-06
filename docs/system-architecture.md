@@ -26,11 +26,11 @@
 ### Edge Capture Layer
 - **Devices**: Hikvision DS-K1T341AMF terminals running face access control firmware.
 - **Protocols**: HTTP Digest Auth against `/ISAPI/AccessControl/**` endpoints and persistent `/ISAPI/Event/notification/alertStream` for live events.
-- **Gateway**: Mini PC / Jetson running [`attendance_listener.py`](../attendance_listener.py) for each campus; responsibilities:
+- **Gateway**: Mini PC / Jetson running [`attendance_listener.py`](../backend/attendance_listener.py) for each campus; responsibilities:
   - Maintain digest auth session and reconnect with backoff.
   - Enrich events with local metadata (`student_metadata.py`).
-  - Deduplicate within an 8-hour window and store JSON backups under `data/attendance/`.
-  - Push records to Firestore and trigger BINUS API uploads via [`api_integrate.py`](../api_integrate.py).
+  - Deduplicate within an 8-hour window and store JSON backups under `backend/data/attendance/`.
+  - Push records to Firestore and trigger BINUS API uploads via [`api_integrate.py`](../backend/api_integrate.py).
 
 ### Cloud Data Plane
 - **Firestore collections**:
