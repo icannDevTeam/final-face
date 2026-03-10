@@ -4,10 +4,10 @@ import {
   loadModels,
   loadDescriptors,
   detectAndMatch,
-  detectFace,
   isModelsLoaded,
   getLoadedCount,
 } from '../lib/faceRecognition';
+import { createLivenessChecker, detectWithLandmarks } from '../lib/liveness';
 import { checkIn } from '../lib/api';
 import { checkProximity } from '../lib/geolocation';
 import {
@@ -38,9 +38,12 @@ export default function ScanPage() {
   const [faceDetected, setFaceDetected] = useState(false);
   const [modelsReady, setModelsReady] = useState(false); // means models + descriptors loaded
   const [cameraReady, setCameraReady] = useState(false);
+  const [livenessStatus, setLivenessStatus] = useState(null); // { passed, prompt, blinkPassed, motionPassed }
+  const [livenessOk, setLivenessOk] = useState(false);
 
   // Streak tracking
   const streakRef = useRef({ id: null, count: 0 });
+  const livenessRef = useRef(null);
 
   // Ref to hold performClockIn so runRecognitionLoop can access it
   // without a temporal dead zone / circular useCallback dependency
@@ -128,7 +131,7 @@ export default function ScanPage() {
     }
   }, []);
 
-  // ─── Face overlay drawing ──────────────────────────────────
+  // ─── Face overlay drawing + liveness ───────────────────────
 
   const drawOverlay = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current) return;
@@ -146,17 +149,26 @@ export default function ScanPage() {
         return;
       }
 
-      const det = await detectFace(video);
+      const det = await detectWithLandmarks(video);
       if (det) {
         setFaceDetected(true);
-        const { x, y, width, height } = det.box;
+        const { x, y, width, height } = det.detection.box;
         const cx = x + width / 2;
         const cy = y + height / 2;
         const rx = width / 2 + 15;
         const ry = height / 2 + 25;
 
-        // Elliptical face outline
-        ctx.strokeStyle = '#00A3E0';
+        // Feed landmarks to liveness checker
+        if (!livenessRef.current) {
+          livenessRef.current = createLivenessChecker();
+        }
+        const lStatus = livenessRef.current.update(det.landmarks);
+        setLivenessStatus(lStatus);
+        if (lStatus.passed && !livenessOk) setLivenessOk(true);
+
+        // Elliptical face outline — color reflects liveness state
+        const ellipseColor = lStatus.passed ? '#10B981' : '#00A3E0';
+        ctx.strokeStyle = ellipseColor;
         ctx.lineWidth = 3;
         ctx.setLineDash([8, 4]);
         ctx.beginPath();
@@ -166,7 +178,7 @@ export default function ScanPage() {
         // Solid inner ring
         ctx.setLineDash([]);
         ctx.lineWidth = 2;
-        ctx.strokeStyle = 'rgba(0,84,166,0.5)';
+        ctx.strokeStyle = lStatus.passed ? 'rgba(16,185,129,0.5)' : 'rgba(0,84,166,0.5)';
         ctx.beginPath();
         ctx.ellipse(cx, cy, rx - 8, ry - 8, 0, 0, Math.PI * 2);
         ctx.stroke();
@@ -179,9 +191,9 @@ export default function ScanPage() {
       console.error('Overlay draw error:', err);
       animRef.current = requestAnimationFrame(drawOverlay);
     }
-  }, []);
+  }, [livenessOk]);
 
-  // ─── Face recognition scan loop ────────────────────────────
+  // ─── Face recognition scan loop (starts only after liveness) ─
 
   const runRecognitionLoop = useCallback(() => {
     scanTimerRef.current = setInterval(async () => {
@@ -298,16 +310,25 @@ export default function ScanPage() {
     }
   }, [cameraReady, modelsReady]);
 
-  // Start scanning & overlay once video is playing
+  // Start overlay once scanning; recognition only after liveness passes
   useEffect(() => {
     if (phase === 'scanning') {
       drawOverlay();
-      runRecognitionLoop();
     }
     return () => {
       if (animRef.current) cancelAnimationFrame(animRef.current);
     };
-  }, [phase, drawOverlay, runRecognitionLoop]);
+  }, [phase, drawOverlay]);
+
+  // Start recognition loop once liveness confirmed
+  useEffect(() => {
+    if (phase === 'scanning' && livenessOk) {
+      runRecognitionLoop();
+    }
+    return () => {
+      if (scanTimerRef.current) clearInterval(scanTimerRef.current);
+    };
+  }, [phase, livenessOk, runRecognitionLoop]);
 
   // Auto-navigate home after success
   useEffect(() => {
@@ -330,10 +351,10 @@ export default function ScanPage() {
         <div style={{ width: 36 }} /> {/* spacer for centering */}
       </div>
 
-      {/* Instruction bar */}
+      {/* Instruction bar — shows liveness prompt */}
       {phase === 'scanning' && (
-        <div className={styles.instructionBar}>
-          Face forward &amp; look directly at camera
+        <div className={`${styles.instructionBar} ${livenessOk ? styles.instructionBarSuccess : ''}`}>
+          {livenessStatus?.prompt || 'Face forward & blink naturally'}
         </div>
       )}
 
@@ -433,7 +454,12 @@ export default function ScanPage() {
         )}
         {phase === 'scanning' && (
           <p className={styles.statusText}>
-            <Camera size={16} /> {faceDetected ? 'Analyzing face…' : 'Position your face in frame'}
+            <Camera size={16} />{' '}
+            {!faceDetected
+              ? 'Position your face in frame'
+              : livenessOk
+                ? 'Recognizing face…'
+                : 'Verifying liveness…'}
           </p>
         )}
         {phase === 'done' && (
