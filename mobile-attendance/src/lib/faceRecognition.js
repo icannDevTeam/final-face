@@ -29,14 +29,12 @@ let labeledDescriptors = []; // array of faceapi.LabeledFaceDescriptors
 export async function loadModels(onProgress) {
   if (modelsLoaded) return;
 
-  onProgress?.('Loading face detection model…');
-  await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
-
-  onProgress?.('Loading landmark model…');
-  await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
-
-  onProgress?.('Loading recognition model…');
-  await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+  onProgress?.('Loading face models…');
+  await Promise.all([
+    faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+  ]);
 
   modelsLoaded = true;
   onProgress?.('Models ready');
@@ -149,6 +147,31 @@ export async function refreshDescriptors(onProgress) {
 
 export function getLoadedCount() {
   return labeledDescriptors.length;
+}
+
+// ─── Background preloading ────────────────────────────────────────────
+
+let _preloadPromise = null;
+
+/**
+ * Preload models + descriptors in the background.
+ * Safe to call early (e.g. on app mount) — runs once, silently.
+ * ScanPage will find everything already warm in memory.
+ */
+export function preload() {
+  if (_preloadPromise) return _preloadPromise;
+
+  _preloadPromise = (async () => {
+    try {
+      const { authReady } = await import('../lib/firebase');
+      await Promise.all([authReady, loadModels()]);
+      await loadDescriptors();
+    } catch {
+      // Silent — ScanPage will retry if needed
+    }
+  })();
+
+  return _preloadPromise;
 }
 
 // ─── Face detection & matching ────────────────────────────────────────
