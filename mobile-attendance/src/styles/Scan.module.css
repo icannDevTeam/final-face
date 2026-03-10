@@ -109,6 +109,7 @@
   border-radius: 50%;
   transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
+  transform: translateY(-5vh);
 }
 
 /* Triple ring guides */
@@ -176,10 +177,10 @@
 }
 
 @keyframes scanMove {
-  0%, 100% { top: calc(50% - 135px); opacity: 0; }
+  0%, 100% { top: calc(50% - 5vh - 135px); opacity: 0; }
   10%      { opacity: 1; }
   90%      { opacity: 1; }
-  100%     { top: calc(50% + 135px); opacity: 0; }
+  100%     { top: calc(50% - 5vh + 135px); opacity: 0; }
 }
 
 /* ─── Match Overlay ──────────────────────────────────── */
