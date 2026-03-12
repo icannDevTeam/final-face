@@ -1275,10 +1275,10 @@ def _upload_attendance_record(db, name: str, employee_no: str,
 
 
 def _determine_status(event_time_str: str) -> str:
-    """Determine Present/Late based on time.  Cutoff is 08:15."""
+    """Determine Present/Late based on time.  Cutoff is 07:30."""
     try:
         dt = datetime.fromisoformat(event_time_str.replace("Z", "+00:00"))
-        cutoff = dt.replace(hour=8, minute=15, second=0, microsecond=0)
+        cutoff = dt.replace(hour=7, minute=30, second=0, microsecond=0)
         return "Present" if dt <= cutoff else "Late"
     except Exception:
         return "Present"

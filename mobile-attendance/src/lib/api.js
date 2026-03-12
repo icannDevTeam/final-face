@@ -115,9 +115,9 @@ export async function checkIn(studentId, studentName, location, metadata = {}) {
     };
   }
 
-  // Determine if late (after 08:15 WIB)
+  // Determine if late (after 07:30 WIB)
   const [h, m] = time.split(':').map(Number);
-  const isLate = h > 8 || (h === 8 && m > 15);
+  const isLate = h > 7 || (h === 7 && m > 30);
 
   const record = {
     name: studentName,
@@ -134,6 +134,7 @@ export async function checkIn(studentId, studentName, location, metadata = {}) {
       accuracy: location.accuracy,
     } : null,
     distance: location.distance || 0,
+    ...(typeof metadata.confidence === 'number' ? { confidence: metadata.confidence / 100 } : {}),
     updatedAt: new Date().toISOString(),
   };
 

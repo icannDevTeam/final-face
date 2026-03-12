@@ -264,6 +264,7 @@ export default function ScanPage() {
         {
           homeroom: result.student.homeroom,
           grade: result.student.grade,
+          confidence: result.confidence,
         }
       );
 
