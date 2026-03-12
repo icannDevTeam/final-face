@@ -164,14 +164,34 @@ export function preload() {
   _preloadPromise = (async () => {
     try {
       const { authReady } = await import('../lib/firebase');
-      await Promise.all([authReady, loadModels()]);
-      await loadDescriptors();
+      // Load models, auth, and descriptors in parallel.
+      // Descriptors only need auth (not models), so don't wait for models first.
+      await Promise.all([
+        loadModels().then(warmUpWebGL),
+        authReady.then(() => loadDescriptors()),
+      ]);
     } catch {
       // Silent — ScanPage will retry if needed
     }
   })();
 
   return _preloadPromise;
+}
+
+/**
+ * Run a dummy detection on a tiny canvas to force WebGL shader compilation.
+ * The first real detectSingleFace() call is always slow (~500ms) because
+ * shaders are compiled on demand. Moving that cost here means the camera
+ * page feels instant.
+ */
+async function warmUpWebGL() {
+  try {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    await faceapi.detectSingleFace(c);
+  } catch {
+    // Non-critical — shaders will compile on first real detection instead
+  }
 }
 
 // ─── Face detection & matching ────────────────────────────────────────

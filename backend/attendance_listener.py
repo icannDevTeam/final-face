@@ -51,8 +51,8 @@ HIKVISION_USER = os.getenv("HIKVISION_USER", "admin")
 HIKVISION_PASS = os.getenv("HIKVISION_PASS", "password.123")
 
 DATA_DIR = Path(__file__).parent / "data" / "attendance"
-CUTOFF_HOUR = 8
-CUTOFF_MINUTE = 15  # 08:15 = late threshold
+CUTOFF_HOUR = 7
+CUTOFF_MINUTE = 30  # 07:30 = late threshold
 DUPLICATE_WINDOW = 28800  # 8 hours — one-time attendance per session
 
 WIB = timezone(timedelta(hours=7))  # UTC+7
