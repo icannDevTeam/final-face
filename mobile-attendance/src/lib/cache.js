@@ -170,7 +170,7 @@ export async function idbDel(key) {
 // ─── Cache TTL presets (milliseconds) ────────────────────────────────
 
 export const TTL = {
-  DESCRIPTORS: 24 * 60 * 60 * 1000, // 24 hours — face descriptors from Firestore
+  DESCRIPTORS: 30 * 60 * 1000, // 30 min — face descriptors from Firestore
   STUDENT:     60 * 60 * 1000,    // 1 hour — student profile data
   METADATA:    60 * 60 * 1000,    // 1 hour — student_metadata for BINUS API
   CHECKIN:     12 * 60 * 60 * 1000, // 12 hours — today's check-in dedup
