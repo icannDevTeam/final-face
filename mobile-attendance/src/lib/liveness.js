@@ -161,13 +161,14 @@ export function createLivenessChecker() {
     if (!landmarks) return getStatus();
     if (!startTime) startTime = Date.now();
 
+    const challenge = currentChallenge();
+    // Once all challenges are done, stop processing
+    if (challenge === 'done') return getStatus();
+
     if (Date.now() - startTime > LIVENESS_TIMEOUT) {
       timedOut = true;
       return getStatus();
     }
-
-    const challenge = currentChallenge();
-    if (challenge === 'done') return getStatus();
 
     // ── Always accumulate size + motion (background checks) ─────
     if (box) {
