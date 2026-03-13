@@ -38,6 +38,7 @@ export default function ScanPage() {
   const [faceDetected, setFaceDetected] = useState(false);
   const [modelsReady, setModelsReady] = useState(false); // means models + descriptors loaded
   const [cameraReady, setCameraReady] = useState(false);
+  const [loadedCount, setLoadedCount] = useState(0);
 
   // Streak tracking
   const streakRef = useRef({ id: null, count: 0 });
@@ -71,6 +72,7 @@ export default function ScanPage() {
             setPhase('error');
             setStatusMsg('No face descriptors found in database. Please enroll students first.');
           } else {
+            setLoadedCount(count);
             setModelsReady(true);
           }
         }
@@ -367,7 +369,7 @@ export default function ScanPage() {
       {/* Instruction bar */}
       {phase === 'scanning' && (
         <div className={styles.instructionBar}>
-          Look at the camera
+          Look at the camera · {loadedCount} students loaded
         </div>
       )}
 
@@ -480,7 +482,7 @@ export default function ScanPage() {
         {phase === 'scanning' && (
           <p className={styles.statusText}>
             <Camera size={16} />{' '}
-            {!faceDetected ? 'Position your face in frame' : 'Recognizing face…'}
+            {!faceDetected ? 'Position your face in frame' : 'Scanning…'}
           </p>
         )}
         {phase === 'done' && (

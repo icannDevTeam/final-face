@@ -15,7 +15,7 @@
  */
 import * as faceapi from 'face-api.js';
 import { db } from './firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, getCountFromServer } from 'firebase/firestore';
 import { idbGet, idbSet, TTL } from './cache';
 
 const MODEL_URL = '/models';
@@ -89,9 +89,25 @@ export async function loadDescriptors(onProgress) {
   try {
     const cached = await idbGet(DESCRIPTORS_CACHE_KEY, TTL.DESCRIPTORS);
     if (cached && cached.length > 0) {
-      labeledDescriptors = deserializeDescriptors(cached);
-      onProgress?.(`Loaded ${labeledDescriptors.length} students (cached)`);
-      return labeledDescriptors.length;
+      // Quick freshness check: compare cached count with Firestore count
+      // to auto-detect newly enrolled students without waiting for TTL
+      try {
+        const countSnap = await getCountFromServer(collection(db, 'face_descriptors'));
+        const serverCount = countSnap.data().count;
+        if (serverCount !== cached.length) {
+          onProgress?.(`Database updated (${cached.length} → ${serverCount}), refreshing…`);
+          // Fall through to Firestore fetch
+        } else {
+          labeledDescriptors = deserializeDescriptors(cached);
+          onProgress?.(`Loaded ${labeledDescriptors.length} students (cached)`);
+          return labeledDescriptors.length;
+        }
+      } catch {
+        // Count check failed — use cache anyway
+        labeledDescriptors = deserializeDescriptors(cached);
+        onProgress?.(`Loaded ${labeledDescriptors.length} students (cached)`);
+        return labeledDescriptors.length;
+      }
     }
   } catch {
     // Cache read failed — fall through to Firestore
