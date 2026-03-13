@@ -188,18 +188,17 @@ export default function ScanPage() {
         const rx = width / 2 + 15;
         const ry = height / 2 + 25;
 
-        // Feed landmarks + box to liveness checker
+        // Feed landmarks + box to liveness checker (stop once passed)
         if (!livenessRef.current) {
           livenessRef.current = createLivenessChecker();
         }
-        const lStatus = livenessRef.current.update(det.landmarks, det.detection.box);
-        setLivenessStatus(lStatus);
+        if (!livenessOk) {
+          const lStatus = livenessRef.current.update(det.landmarks, det.detection.box);
+          setLivenessStatus(lStatus);
 
-        // Handle liveness timeout — let user retry
-        if (lStatus.timedOut && !livenessOk) {
-          // Don't auto-fail, user can tap Retry
-        } else if (lStatus.passed && !livenessOk) {
-          setLivenessOk(true);
+          if (lStatus.passed) {
+            setLivenessOk(true);
+          }
         }
 
         // Elliptical face outline — color reflects challenge state
