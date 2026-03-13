@@ -105,11 +105,7 @@ const TURN_DIRECTIONS = ['turn_left', 'turn_right'];
 
 function generateChallenges() {
   const turnDir = TURN_DIRECTIONS[Math.random() < 0.5 ? 0 : 1];
-  // Randomize whether blink or turn comes first
-  if (Math.random() < 0.5) {
-    return ['stabilize', 'blink', turnDir];
-  }
-  return ['stabilize', turnDir, 'blink'];
+  return ['stabilize', turnDir];
 }
 
 // ─── Liveness checker factory ─────────────────────────────────────────
