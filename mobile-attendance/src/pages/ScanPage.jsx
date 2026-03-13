@@ -108,26 +108,56 @@ export default function ScanPage() {
         setStatusMsg('Camera requires HTTPS. Please access this page via a secure connection.');
         return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-        },
-        audio: false,
-      });
+
+      setStatusMsg('Requesting camera access…');
+
+      // Timeout wrapper — getUserMedia can hang on some mobile browsers
+      // (permission prompt stuck behind PWA, silently blocked, etc.)
+      const stream = await Promise.race([
+        navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'user',
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+          },
+          audio: false,
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(Object.assign(new Error('Camera request timed out. Please check your browser permissions and reload.'), { name: 'TimeoutError' })), 15000)
+        ),
+      ]);
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        // video.play() can also hang on some mobile browsers
+        await Promise.race([
+          videoRef.current.play(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(Object.assign(new Error('Camera stream failed to start. Please reload and try again.'), { name: 'PlayError' })), 8000)
+          ),
+        ]);
       }
       setCameraReady(true);
-      setStatusMsg('Camera ready. Loading face engine…');
     } catch (err) {
-      console.error('Camera access denied:', err);
+      console.error('Camera init failed:', err);
+      // Release any acquired stream on failure
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
       setPhase('error');
-      setStatusMsg('Camera access denied. Please allow camera permissions.');
+      setStatusMsg(
+        err.name === 'NotAllowedError'
+          ? 'Camera access denied. Please allow camera permissions in your browser settings and reload.'
+          : err.name === 'NotFoundError'
+          ? 'No camera found on this device.'
+          : err.name === 'NotReadableError'
+          ? 'Camera is in use by another app. Please close it and try again.'
+          : err.name === 'TimeoutError'
+          ? 'Camera request timed out. Please check your permissions and reload.'
+          : `Camera failed: ${err.message}`
+      );
     }
   }, []);
 
@@ -158,16 +188,23 @@ export default function ScanPage() {
         const rx = width / 2 + 15;
         const ry = height / 2 + 25;
 
-        // Feed landmarks to liveness checker
+        // Feed landmarks + box to liveness checker
         if (!livenessRef.current) {
           livenessRef.current = createLivenessChecker();
         }
-        const lStatus = livenessRef.current.update(det.landmarks);
+        const lStatus = livenessRef.current.update(det.landmarks, det.detection.box);
         setLivenessStatus(lStatus);
-        if (lStatus.passed && !livenessOk) setLivenessOk(true);
 
-        // Elliptical face outline — color reflects liveness state
-        const ellipseColor = lStatus.passed ? '#10B981' : '#00A3E0';
+        // Handle liveness timeout — let user retry
+        if (lStatus.timedOut && !livenessOk) {
+          // Don't auto-fail, user can tap Retry
+        } else if (lStatus.passed && !livenessOk) {
+          setLivenessOk(true);
+        }
+
+        // Elliptical face outline — color reflects challenge state
+        const isActive = lStatus.challenge === 'turn_left' || lStatus.challenge === 'turn_right';
+        const ellipseColor = lStatus.passed ? '#10B981' : isActive ? '#F59E0B' : '#00A3E0';
         ctx.strokeStyle = ellipseColor;
         ctx.lineWidth = 3;
         ctx.setLineDash([8, 4]);
@@ -178,10 +215,22 @@ export default function ScanPage() {
         // Solid inner ring
         ctx.setLineDash([]);
         ctx.lineWidth = 2;
-        ctx.strokeStyle = lStatus.passed ? 'rgba(16,185,129,0.5)' : 'rgba(0,84,166,0.5)';
+        ctx.strokeStyle = lStatus.passed
+          ? 'rgba(16,185,129,0.5)'
+          : isActive ? 'rgba(245,158,11,0.35)' : 'rgba(0,84,166,0.5)';
         ctx.beginPath();
         ctx.ellipse(cx, cy, rx - 8, ry - 8, 0, 0, Math.PI * 2);
         ctx.stroke();
+
+        // Progress arc around ellipse (shows liveness completion)
+        if (!lStatus.passed && lStatus.progress > 0) {
+          ctx.strokeStyle = '#10B981';
+          ctx.lineWidth = 3;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, rx + 6, ry + 8, 0, -Math.PI / 2, -Math.PI / 2 + lStatus.progress * Math.PI * 2);
+          ctx.stroke();
+        }
       } else {
         setFaceDetected(false);
       }
@@ -308,6 +357,8 @@ export default function ScanPage() {
       setStatusMsg('Look at the camera');
     } else if (cameraReady && !modelsReady) {
       setStatusMsg('Camera ready. Loading face engine…');
+    } else if (!cameraReady && modelsReady) {
+      setStatusMsg('Waiting for camera access…');
     }
   }, [cameraReady, modelsReady]);
 
@@ -352,10 +403,27 @@ export default function ScanPage() {
         <div style={{ width: 36 }} /> {/* spacer for centering */}
       </div>
 
-      {/* Instruction bar — shows liveness prompt */}
+      {/* Instruction bar — shows liveness challenge prompt */}
       {phase === 'scanning' && (
-        <div className={`${styles.instructionBar} ${livenessOk ? styles.instructionBarSuccess : ''}`}>
-          {livenessStatus?.prompt || 'Face forward & blink naturally'}
+        <div className={`${styles.instructionBar} ${livenessOk ? styles.instructionBarSuccess : livenessStatus?.timedOut ? styles.instructionBarError : ''}`}>
+          <span>{livenessStatus?.prompt || 'Hold your face steady in the frame'}</span>
+          {!livenessOk && !livenessStatus?.timedOut && livenessStatus?.progress > 0 && (
+            <div className={styles.challengeProgress}>
+              <div className={styles.challengeProgressFill} style={{ width: `${(livenessStatus.progress * 100).toFixed(0)}%` }} />
+            </div>
+          )}
+          {livenessStatus?.timedOut && (
+            <button
+              className={styles.retryLivenessBtn}
+              onClick={() => {
+                if (livenessRef.current) livenessRef.current.reset();
+                setLivenessOk(false);
+                setLivenessStatus(null);
+              }}
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
 
@@ -365,6 +433,7 @@ export default function ScanPage() {
           ref={videoRef}
           className={styles.video}
           playsInline
+          autoPlay
           muted
         />
         <canvas ref={canvasRef} className={styles.overlay} />
@@ -427,9 +496,20 @@ export default function ScanPage() {
           <div className={styles.errorOverlay}>
             <XCircle size={48} />
             <p>{statusMsg}</p>
-            <button className={styles.retryBtn} onClick={() => { stopCamera(); navigate('/'); }}>
-              Go Back
-            </button>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button className={styles.retryBtn} onClick={() => {
+                setPhase('starting');
+                setStatusMsg('Retrying camera…');
+                setCameraReady(false);
+                stopCamera();
+                startCamera();
+              }}>
+                Retry Camera
+              </button>
+              <button className={styles.retryBtn} onClick={() => { stopCamera(); navigate('/'); }}>
+                Go Back
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -460,7 +540,9 @@ export default function ScanPage() {
               ? 'Position your face in frame'
               : livenessOk
                 ? 'Recognizing face…'
-                : 'Verifying liveness…'}
+                : livenessStatus?.timedOut
+                  ? 'Liveness timed out — tap Retry above'
+                  : `Verifying liveness… Step ${(livenessStatus?.challengeIdx || 0) + 1}/${livenessStatus?.totalSteps || 3}`}
           </p>
         )}
         {phase === 'done' && (

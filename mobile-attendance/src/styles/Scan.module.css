@@ -71,6 +71,49 @@
   border-bottom-color: rgba(16, 185, 129, 0.12);
 }
 
+.instructionBarError {
+  background: #FEF2F2;
+  color: #DC2626;
+  border-bottom-color: rgba(220, 38, 38, 0.12);
+}
+
+/* Challenge progress bar */
+.challengeProgress {
+  margin-top: 0.4rem;
+  width: 100%;
+  max-width: 200px;
+  height: 3px;
+  background: rgba(0, 84, 166, 0.12);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.challengeProgressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #0054A6, #10B981);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.retryLivenessBtn {
+  margin-top: 0.4rem;
+  padding: 0.3rem 1.2rem;
+  background: #DC2626;
+  color: #fff;
+  border: none;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.retryLivenessBtn:active {
+  transform: scale(0.95);
+}
+
 /* ─── Camera Viewport ────────────────────────────────── */
 .viewport {
   flex: 1;
