@@ -4,10 +4,10 @@ import {
   loadModels,
   loadDescriptors,
   detectAndMatch,
+  detectFace,
   isModelsLoaded,
   getLoadedCount,
 } from '../lib/faceRecognition';
-import { createLivenessChecker, detectWithLandmarks } from '../lib/liveness';
 import { checkIn } from '../lib/api';
 import { checkProximity } from '../lib/geolocation';
 import {
@@ -38,12 +38,9 @@ export default function ScanPage() {
   const [faceDetected, setFaceDetected] = useState(false);
   const [modelsReady, setModelsReady] = useState(false); // means models + descriptors loaded
   const [cameraReady, setCameraReady] = useState(false);
-  const [livenessStatus, setLivenessStatus] = useState(null); // { passed, prompt, blinkPassed, motionPassed }
-  const [livenessOk, setLivenessOk] = useState(false);
 
   // Streak tracking
   const streakRef = useRef({ id: null, count: 0 });
-  const livenessRef = useRef(null);
 
   // Ref to hold performClockIn so runRecognitionLoop can access it
   // without a temporal dead zone / circular useCallback dependency
@@ -179,32 +176,17 @@ export default function ScanPage() {
         return;
       }
 
-      const det = await detectWithLandmarks(video);
+      const det = await detectFace(video);
       if (det) {
         setFaceDetected(true);
-        const { x, y, width, height } = det.detection.box;
+        const { x, y, width, height } = det.box;
         const cx = x + width / 2;
         const cy = y + height / 2;
         const rx = width / 2 + 15;
         const ry = height / 2 + 25;
 
-        // Feed landmarks + box to liveness checker (stop once passed)
-        if (!livenessRef.current) {
-          livenessRef.current = createLivenessChecker();
-        }
-        if (!livenessOk) {
-          const lStatus = livenessRef.current.update(det.landmarks, det.detection.box);
-          setLivenessStatus(lStatus);
-
-          if (lStatus.passed) {
-            setLivenessOk(true);
-          }
-        }
-
-        // Elliptical face outline — color reflects challenge state
-        const isActive = lStatus.challenge === 'turn_left' || lStatus.challenge === 'turn_right';
-        const ellipseColor = lStatus.passed ? '#10B981' : isActive ? '#F59E0B' : '#00A3E0';
-        ctx.strokeStyle = ellipseColor;
+        // Elliptical face outline
+        ctx.strokeStyle = '#00A3E0';
         ctx.lineWidth = 3;
         ctx.setLineDash([8, 4]);
         ctx.beginPath();
@@ -214,22 +196,10 @@ export default function ScanPage() {
         // Solid inner ring
         ctx.setLineDash([]);
         ctx.lineWidth = 2;
-        ctx.strokeStyle = lStatus.passed
-          ? 'rgba(16,185,129,0.5)'
-          : isActive ? 'rgba(245,158,11,0.35)' : 'rgba(0,84,166,0.5)';
+        ctx.strokeStyle = 'rgba(0,84,166,0.5)';
         ctx.beginPath();
         ctx.ellipse(cx, cy, rx - 8, ry - 8, 0, 0, Math.PI * 2);
         ctx.stroke();
-
-        // Progress arc around ellipse (shows liveness completion)
-        if (!lStatus.passed && lStatus.progress > 0) {
-          ctx.strokeStyle = '#10B981';
-          ctx.lineWidth = 3;
-          ctx.setLineDash([]);
-          ctx.beginPath();
-          ctx.ellipse(cx, cy, rx + 6, ry + 8, 0, -Math.PI / 2, -Math.PI / 2 + lStatus.progress * Math.PI * 2);
-          ctx.stroke();
-        }
       } else {
         setFaceDetected(false);
       }
@@ -239,7 +209,7 @@ export default function ScanPage() {
       console.error('Overlay draw error:', err);
       animRef.current = requestAnimationFrame(drawOverlay);
     }
-  }, [livenessOk]);
+  }, []);
 
   // ─── Face recognition scan loop (starts only after liveness) ─
 
@@ -361,25 +331,17 @@ export default function ScanPage() {
     }
   }, [cameraReady, modelsReady]);
 
-  // Start overlay once scanning; recognition only after liveness passes
+  // Start overlay + recognition loop once scanning
   useEffect(() => {
     if (phase === 'scanning') {
       drawOverlay();
-    }
-    return () => {
-      if (animRef.current) cancelAnimationFrame(animRef.current);
-    };
-  }, [phase, drawOverlay]);
-
-  // Start recognition loop once liveness confirmed
-  useEffect(() => {
-    if (phase === 'scanning' && livenessOk) {
       runRecognitionLoop();
     }
     return () => {
+      if (animRef.current) cancelAnimationFrame(animRef.current);
       if (scanTimerRef.current) clearInterval(scanTimerRef.current);
     };
-  }, [phase, livenessOk, runRecognitionLoop]);
+  }, [phase, drawOverlay, runRecognitionLoop]);
 
   // Auto-navigate home after success
   useEffect(() => {
@@ -402,27 +364,10 @@ export default function ScanPage() {
         <div style={{ width: 36 }} /> {/* spacer for centering */}
       </div>
 
-      {/* Instruction bar — shows liveness challenge prompt */}
+      {/* Instruction bar */}
       {phase === 'scanning' && (
-        <div className={`${styles.instructionBar} ${livenessOk ? styles.instructionBarSuccess : livenessStatus?.timedOut ? styles.instructionBarError : ''}`}>
-          <span>{livenessStatus?.prompt || 'Hold your face steady in the frame'}</span>
-          {!livenessOk && !livenessStatus?.timedOut && livenessStatus?.progress > 0 && (
-            <div className={styles.challengeProgress}>
-              <div className={styles.challengeProgressFill} style={{ width: `${(livenessStatus.progress * 100).toFixed(0)}%` }} />
-            </div>
-          )}
-          {livenessStatus?.timedOut && (
-            <button
-              className={styles.retryLivenessBtn}
-              onClick={() => {
-                if (livenessRef.current) livenessRef.current.reset();
-                setLivenessOk(false);
-                setLivenessStatus(null);
-              }}
-            >
-              Retry
-            </button>
-          )}
+        <div className={styles.instructionBar}>
+          Look at the camera
         </div>
       )}
 
@@ -535,13 +480,7 @@ export default function ScanPage() {
         {phase === 'scanning' && (
           <p className={styles.statusText}>
             <Camera size={16} />{' '}
-            {!faceDetected
-              ? 'Position your face in frame'
-              : livenessOk
-                ? 'Recognizing face…'
-                : livenessStatus?.timedOut
-                  ? 'Liveness timed out — tap Retry above'
-                  : `Verifying liveness… Step ${(livenessStatus?.challengeIdx || 0) + 1}/${livenessStatus?.totalSteps || 3}`}
+            {!faceDetected ? 'Position your face in frame' : 'Recognizing face…'}
           </p>
         )}
         {phase === 'done' && (
