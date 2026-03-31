@@ -24,16 +24,20 @@ export const auth = getAuth(app);
 /**
  * Sign in anonymously so Firestore security rules pass.
  * Returns a promise that resolves once the user is authenticated.
+ * Rejects with a clear message if anonymous auth is not enabled.
  * Safe to call multiple times — only signs in once.
  */
-export const authReady = new Promise((resolve) => {
+export const authReady = new Promise((resolve, reject) => {
   onAuthStateChanged(auth, (user) => {
     if (user) {
       resolve(user);
     } else {
       signInAnonymously(auth).catch((err) => {
         console.error('Anonymous auth failed:', err.message);
-        resolve(null); // resolve anyway so app doesn't hang
+        reject(new Error(
+          'Authentication failed. Anonymous sign-in may not be enabled in Firebase Console. ' +
+          'Please ask your administrator to enable it (Firebase Console → Authentication → Sign-in method → Anonymous).'
+        ));
       });
     }
   });
