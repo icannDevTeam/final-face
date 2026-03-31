@@ -50,6 +50,15 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ─── Spoof attempt logs (write-only from client) ───────────────
+    match /spoof_attempts/{date}/logs/{logId} {
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasAll(['studentId', 'studentName', 'reason', 'timestamp'])
+        && request.resource.data.studentId is string
+        && request.resource.data.reason is string;
+      allow read, update, delete: if false; // Admin SDK only
+    }
+
     // ─── Deny everything else ────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

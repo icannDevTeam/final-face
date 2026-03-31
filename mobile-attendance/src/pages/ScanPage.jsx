@@ -17,7 +17,10 @@ import {
   CheckCircle2,
   XCircle,
   ScanFace,
+  ShieldAlert,
 } from 'lucide-react';
+import { db } from '../lib/firebase';
+import { doc, setDoc } from 'firebase/firestore';
 import styles from '../styles/Scan.module.css';
 
 const SCAN_INTERVAL = 600;   // ms between recognition attempts
@@ -34,7 +37,7 @@ export default function ScanPage() {
   const scanTimerRef = useRef(null);
   const livenessTimerRef = useRef(null);
 
-  // phases: starting | liveness | scanning | matched | clocking | done | error
+  // phases: starting | liveness | scanning | matched | clocking | done | spoofed | error
   const [phase, setPhase] = useState('starting');
   const [statusMsg, setStatusMsg] = useState('Starting camera…');
   const [matchResult, setMatchResult] = useState(null);
@@ -45,6 +48,7 @@ export default function ScanPage() {
   const [loadedCount, setLoadedCount] = useState(0);
   const [livenessPrompt, setLivenessPrompt] = useState('');
   const [livenessProgress, setLivenessProgress] = useState(0);
+  const [spoofDetails, setSpoofDetails] = useState(null);
 
   // Streak tracking
   const streakRef = useRef({ id: null, count: 0 });
@@ -314,6 +318,36 @@ export default function ScanPage() {
           return;
         }
       } catch (locErr) {
+        // Check if this is a spoofing block
+        const isSpoofBlock = locErr.message && (
+          locErr.message.includes('spoofed') ||
+          locErr.message.includes('verification failed') ||
+          locErr.message.includes('mock location')
+        );
+        if (isSpoofBlock) {
+          stopCamera();
+          setSpoofDetails({
+            studentId: result.student?.id || 'unknown',
+            studentName: result.student?.name || 'Unknown',
+            message: locErr.message,
+            timestamp: new Date().toISOString(),
+          });
+          setPhase('spoofed');
+          // Log spoof attempt to Firestore for admin review
+          try {
+            const date = new Date().toISOString().slice(0, 10);
+            const logId = `${result.student?.id || 'unknown'}_${Date.now()}`;
+            await setDoc(doc(db, 'spoof_attempts', date, 'logs', logId), {
+              studentId: result.student?.id || 'unknown',
+              studentName: result.student?.name || 'Unknown',
+              homeroom: result.student?.homeroom || '',
+              reason: locErr.message,
+              timestamp: new Date().toISOString(),
+              userAgent: navigator.userAgent,
+            });
+          } catch { /* best effort logging */ }
+          return;
+        }
         setPhase('error');
         setStatusMsg(locErr.message);
         return;
@@ -531,6 +565,36 @@ export default function ScanPage() {
               </button>
               <button className={styles.retryBtn} onClick={() => { stopCamera(); navigate('/'); }}>
                 Go Back
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Spoofing detected overlay — full deterrent screen */}
+        {phase === 'spoofed' && (
+          <div className={styles.spoofOverlay}>
+            <div className={styles.spoofCard}>
+              <div className={styles.spoofIconWrap}>
+                <ShieldAlert size={56} />
+              </div>
+              <h2 className={styles.spoofTitle}>Location Spoofing Detected</h2>
+              <p className={styles.spoofMsg}>
+                Your device is using a fake or mock GPS location.
+                This attempt has been <strong>recorded and flagged</strong> for review by school administration.
+              </p>
+              {spoofDetails && (
+                <div className={styles.spoofMeta}>
+                  <p>Student: {spoofDetails.studentName}</p>
+                  <p>ID: {spoofDetails.studentId}</p>
+                  <p>Time: {new Date(spoofDetails.timestamp).toLocaleTimeString()}</p>
+                </div>
+              )}
+              <div className={styles.spoofWarning}>
+                Repeated spoofing attempts may result in disciplinary action.
+                Please disable mock location apps and clock in at school.
+              </div>
+              <button className={styles.spoofBtn} onClick={() => { navigate('/'); }}>
+                Return to Home
               </button>
             </div>
           </div>
