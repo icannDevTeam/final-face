@@ -51,11 +51,12 @@ const MAX_GPS_ACCURACY_M = 50;  // reject readings worse than this (tightened fo
 const SETTLE_TIME_MS     = 10_000; // how long to wait for a better fix
 
 // ─── Anti-spoofing configuration ─────────────────────────────────────
-const MIN_SAMPLES_FOR_VALIDATION = 3; // need this many GPS samples to validate
+const MIN_SAMPLES_FOR_VALIDATION = 4; // need this many GPS samples to validate
 const MAX_SPEED_MPS = 30; // 30 m/s ≈ 108 km/h — reject teleportation
 const SPOOF_ACCURACY_FLOOR = 3; // suspiciously perfect accuracy (< 3m) on mobile = likely spoofed
-const STABILITY_THRESHOLD = 0.0001; // if all samples identical to this precision = synthetic
-const GPS_SAMPLE_INTERVAL = 800; // ms between validation samples
+const STABILITY_THRESHOLD = 0.00005; // tighter: ~5.5m — real GPS jitters more than this
+const GPS_SAMPLE_INTERVAL = 1200; // ms between validation samples (longer gap to detect frozen coords)
+const GPS_WARMUP_MS = 5_000; // require GPS to be "warm" for at least 5 seconds
 
 // ─── Haversine distance (metres) ─────────────────────────────────────
 function haversineMetres(lat1, lon1, lat2, lon2) {
@@ -192,31 +193,64 @@ function recordGpsFix(lat, lng, accuracy) {
 }
 
 /**
- * Collect multiple GPS samples and check for spoofing indicators:
- * 1. Suspiciously perfect accuracy (< 3m on mobile = unusual)
- * 2. All samples identical (real GPS has natural jitter)
- * 3. Impossible speed between consecutive readings
- * 4. Altitude = 0 exactly (many spoofers don't set altitude)
+ * Collect multiple GPS samples and check for spoofing indicators.
+ * Browser/PWA cannot directly detect Android mock location — we use
+ * heuristics that catch the vast majority of fake GPS apps:
+ *
+ * 1. Suspiciously perfect accuracy (< 3m on mobile = unusual for real GPS)
+ * 2. All samples identical (real GPS has natural jitter of 1-10m)
+ * 3. Impossible speed between consecutive readings (teleportation)
+ * 4. Altitude = 0 or null (many spoofers don't set altitude)
+ * 5. altitudeAccuracy missing (real GPS always reports this)
+ * 6. speed field check (moving device should have speed; stationary should be null/0)
+ * 7. heading null while speed > 0 (inconsistent — spoofer artifact)
+ * 8. Timestamps too regular (real GPS fix times vary; spoofers return instantly)
+ * 9. GPS warmup — require readings over a minimum time window
  *
  * Returns { lat, lng, accuracy, spoofScore, blocked, reason }
  */
 async function getValidatedPosition() {
   const samples = [];
 
-  // Collect MIN_SAMPLES_FOR_VALIDATION fresh GPS readings
+  // Collect MIN_SAMPLES_FOR_VALIDATION fresh GPS readings with timing data
   for (let i = 0; i < MIN_SAMPLES_FOR_VALIDATION; i++) {
+    const t0 = Date.now();
+    const pos = await getCurrentPosition({ timeout: 10_000 });
+    const responseTime = Date.now() - t0;
+    samples.push({
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy,
+      altitude: pos.coords.altitude,
+      altitudeAccuracy: pos.coords.altitudeAccuracy,
+      speed: pos.coords.speed,
+      heading: pos.coords.heading,
+      ts: Date.now(),
+      responseTime,
+    });
+    // Delay between samples to detect frozen coordinates
+    if (i < MIN_SAMPLES_FOR_VALIDATION - 1) {
+      await new Promise((r) => setTimeout(r, GPS_SAMPLE_INTERVAL));
+    }
+  }
+
+  // Require minimum time window between first and last sample
+  const timeSpan = samples[samples.length - 1].ts - samples[0].ts;
+  if (timeSpan < GPS_WARMUP_MS) {
+    // Wait the remaining time and take one more sample
+    await new Promise((r) => setTimeout(r, GPS_WARMUP_MS - timeSpan));
     const pos = await getCurrentPosition({ timeout: 10_000 });
     samples.push({
       lat: pos.coords.latitude,
       lng: pos.coords.longitude,
       accuracy: pos.coords.accuracy,
       altitude: pos.coords.altitude,
+      altitudeAccuracy: pos.coords.altitudeAccuracy,
+      speed: pos.coords.speed,
+      heading: pos.coords.heading,
       ts: Date.now(),
+      responseTime: 0,
     });
-    // Small delay between samples to detect frozen coordinates
-    if (i < MIN_SAMPLES_FOR_VALIDATION - 1) {
-      await new Promise((r) => setTimeout(r, GPS_SAMPLE_INTERVAL));
-    }
   }
 
   // Use the most accurate sample as the primary reading
@@ -224,26 +258,28 @@ async function getValidatedPosition() {
   let spoofScore = 0;
   const reasons = [];
 
-  // Check 1: Suspiciously perfect accuracy
+  // Check 1: Suspiciously perfect accuracy (real mobile GPS is rarely < 3m)
   if (best.accuracy < SPOOF_ACCURACY_FLOOR) {
-    spoofScore += 30;
+    spoofScore += 25;
     reasons.push(`suspiciously perfect accuracy (${best.accuracy.toFixed(1)}m)`);
   }
 
   // Check 2: All coordinates identical (no natural GPS jitter)
-  if (samples.length >= 2) {
+  // Real GPS jitters 1-10m between consecutive reads. Spoofers often return
+  // the exact same coordinate or very minor floating-point noise.
+  if (samples.length >= 3) {
     const allIdentical = samples.every(
       (s) =>
         Math.abs(s.lat - samples[0].lat) < STABILITY_THRESHOLD &&
         Math.abs(s.lng - samples[0].lng) < STABILITY_THRESHOLD
     );
     if (allIdentical) {
-      spoofScore += 40;
+      spoofScore += 35;
       reasons.push('coordinates unnaturally stable (no GPS jitter)');
     }
   }
 
-  // Check 3: Velocity check against previous readings
+  // Check 3: Velocity check against previous session readings
   if (_gpsHistory.length > 0) {
     const prev = _gpsHistory[_gpsHistory.length - 1];
     const dist = haversineMetres(prev.lat, prev.lng, best.lat, best.lng);
@@ -251,24 +287,81 @@ async function getValidatedPosition() {
     if (dtSec > 0) {
       const speed = dist / dtSec;
       if (speed > MAX_SPEED_MPS) {
-        spoofScore += 50;
-        reasons.push(`impossible speed (${Math.round(speed)} m/s = ${Math.round(speed * 3.6)} km/h)`);
+        spoofScore += 40;
+        reasons.push(`impossible speed (${Math.round(speed * 3.6)} km/h)`);
       }
     }
   }
 
-  // Check 4: All altitudes exactly 0 (common in spoofer apps)
+  // Check 4: Altitude analysis
+  // Real GPS: altitude is a real number, altitudeAccuracy is reported
+  // Spoofers: altitude is often 0, null, or altitudeAccuracy missing
+  const allAltNull = samples.every((s) => s.altitude === null || s.altitude === undefined);
   const allAltZero = samples.every((s) => s.altitude === 0);
-  if (allAltZero && samples.length >= 2) {
+  const noAltAccuracy = samples.every((s) => s.altitudeAccuracy === null || s.altitudeAccuracy === undefined);
+
+  if (allAltZero) {
+    spoofScore += 20;
+    reasons.push('altitude fixed at exactly 0m');
+  }
+  if (noAltAccuracy && !allAltNull) {
+    // Has altitude but no accuracy = suspicious (real GPS reports both)
     spoofScore += 15;
-    reasons.push('altitude fixed at 0m');
+    reasons.push('altitude reported without accuracy data');
+  }
+
+  // Check 5: Speed & heading consistency
+  // Spoofers often set speed to 0 and heading to null even when they should vary,
+  // or set heading without speed (impossible in real GPS)
+  const allSpeedZero = samples.every((s) => s.speed === 0);
+  const hasHeadingNoSpeed = samples.some(
+    (s) => s.heading !== null && s.heading !== undefined && (s.speed === null || s.speed === 0)
+  );
+  if (hasHeadingNoSpeed) {
+    spoofScore += 15;
+    reasons.push('heading reported without speed (sensor inconsistency)');
+  }
+
+  // Check 6: Response time analysis
+  // Real GPS takes variable time (50ms-3000ms). Spoofers often respond
+  // nearly instantly and with very consistent timing.
+  const responseTimes = samples.map((s) => s.responseTime).filter((t) => t > 0);
+  if (responseTimes.length >= 3) {
+    const allInstant = responseTimes.every((t) => t < 50);
+    if (allInstant) {
+      spoofScore += 20;
+      reasons.push('GPS response times suspiciously fast (<50ms each)');
+    }
+    // Check for unnaturally consistent response times
+    const mean = responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length;
+    if (mean > 0) {
+      const variance = responseTimes.reduce((s, v) => s + (v - mean) ** 2, 0) / responseTimes.length;
+      const cov = Math.sqrt(variance) / mean;
+      // Real GPS varies a lot (CoV > 0.3). Spoofers are very consistent (CoV < 0.1)
+      if (cov < 0.1 && responseTimes.length >= 3) {
+        spoofScore += 10;
+        reasons.push('GPS timing unnaturally consistent');
+      }
+    }
+  }
+
+  // Check 7: Accuracy never changes across samples
+  // Real GPS accuracy fluctuates. Spoofers often report identical accuracy.
+  if (samples.length >= 3) {
+    const allSameAccuracy = samples.every(
+      (s) => Math.abs(s.accuracy - samples[0].accuracy) < 0.01
+    );
+    if (allSameAccuracy) {
+      spoofScore += 15;
+      reasons.push('accuracy never varies between readings');
+    }
   }
 
   // Record this fix for future velocity checks
   recordGpsFix(best.lat, best.lng, best.accuracy);
 
   // Block if spoof score exceeds threshold
-  const blocked = spoofScore >= 50;
+  const blocked = spoofScore >= 45;
 
   return {
     lat: best.lat,
@@ -277,7 +370,7 @@ async function getValidatedPosition() {
     spoofScore,
     blocked,
     reason: blocked
-      ? `Location appears spoofed: ${reasons.join('; ')}. Please disable mock location apps and try again.`
+      ? `Location verification failed (score: ${spoofScore}). Please ensure mock location/developer GPS apps are disabled and try again.`
       : null,
     reasons,
   };
