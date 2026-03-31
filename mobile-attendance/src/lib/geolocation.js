@@ -54,7 +54,7 @@ const SETTLE_TIME_MS     = 10_000; // how long to wait for a better fix
 const MIN_SAMPLES_FOR_VALIDATION = 4; // need this many GPS samples to validate
 const MAX_SPEED_MPS = 30; // 30 m/s ≈ 108 km/h — reject teleportation
 const SPOOF_ACCURACY_FLOOR = 3; // suspiciously perfect accuracy (< 3m) on mobile = likely spoofed
-const STABILITY_THRESHOLD = 0.00005; // tighter: ~5.5m — real GPS jitters more than this
+const STABILITY_THRESHOLD = 0.000005; // ~0.55m — only flag truly frozen (identical) coordinates
 const GPS_SAMPLE_INTERVAL = 1200; // ms between validation samples (longer gap to detect frozen coords)
 const GPS_WARMUP_MS = 5_000; // require GPS to be "warm" for at least 5 seconds
 
@@ -259,14 +259,15 @@ async function getValidatedPosition() {
   const reasons = [];
 
   // Check 1: Suspiciously perfect accuracy (real mobile GPS is rarely < 3m)
+  // Strong spoof signal — real phones indoors report 15-50m accuracy
   if (best.accuracy < SPOOF_ACCURACY_FLOOR) {
-    spoofScore += 25;
+    spoofScore += 30;
     reasons.push(`suspiciously perfect accuracy (${best.accuracy.toFixed(1)}m)`);
   }
 
-  // Check 2: All coordinates identical (no natural GPS jitter)
-  // Real GPS jitters 1-10m between consecutive reads. Spoofers often return
-  // the exact same coordinate or very minor floating-point noise.
+  // Check 2: All coordinates truly frozen (zero jitter at sub-metre level)
+  // WiFi positioning can be stable within ~5-15m naturally — only flag
+  // coordinates that are identical to <0.55m, which indicates spoofing.
   if (samples.length >= 3) {
     const allIdentical = samples.every(
       (s) =>
@@ -274,8 +275,8 @@ async function getValidatedPosition() {
         Math.abs(s.lng - samples[0].lng) < STABILITY_THRESHOLD
     );
     if (allIdentical) {
-      spoofScore += 35;
-      reasons.push('coordinates unnaturally stable (no GPS jitter)');
+      spoofScore += 15;
+      reasons.push('coordinates frozen (sub-metre identical)');
     }
   }
 
@@ -287,7 +288,7 @@ async function getValidatedPosition() {
     if (dtSec > 0) {
       const speed = dist / dtSec;
       if (speed > MAX_SPEED_MPS) {
-        spoofScore += 40;
+        spoofScore += 70;
         reasons.push(`impossible speed (${Math.round(speed * 3.6)} km/h)`);
       }
     }
@@ -301,12 +302,13 @@ async function getValidatedPosition() {
   const noAltAccuracy = samples.every((s) => s.altitudeAccuracy === null || s.altitudeAccuracy === undefined);
 
   if (allAltZero) {
-    spoofScore += 20;
+    // Altitude 0 is common indoors (WiFi positioning) — low weight
+    spoofScore += 10;
     reasons.push('altitude fixed at exactly 0m');
   }
   if (noAltAccuracy && !allAltNull) {
-    // Has altitude but no accuracy = suspicious (real GPS reports both)
-    spoofScore += 15;
+    // Has altitude but no accuracy — mildly suspicious
+    spoofScore += 5;
     reasons.push('altitude reported without accuracy data');
   }
 
@@ -329,7 +331,8 @@ async function getValidatedPosition() {
   if (responseTimes.length >= 3) {
     const allInstant = responseTimes.every((t) => t < 50);
     if (allInstant) {
-      spoofScore += 20;
+      // WiFi positioning can also be fast — moderate weight
+      spoofScore += 10;
       reasons.push('GPS response times suspiciously fast (<50ms each)');
     }
     // Check for unnaturally consistent response times
@@ -339,7 +342,7 @@ async function getValidatedPosition() {
       const cov = Math.sqrt(variance) / mean;
       // Real GPS varies a lot (CoV > 0.3). Spoofers are very consistent (CoV < 0.1)
       if (cov < 0.1 && responseTimes.length >= 3) {
-        spoofScore += 10;
+        spoofScore += 5;
         reasons.push('GPS timing unnaturally consistent');
       }
     }
@@ -352,7 +355,8 @@ async function getValidatedPosition() {
       (s) => Math.abs(s.accuracy - samples[0].accuracy) < 0.01
     );
     if (allSameAccuracy) {
-      spoofScore += 15;
+      // WiFi accuracy is often a fixed value — low weight on its own
+      spoofScore += 5;
       reasons.push('accuracy never varies between readings');
     }
   }
@@ -360,8 +364,13 @@ async function getValidatedPosition() {
   // Record this fix for future velocity checks
   recordGpsFix(best.lat, best.lng, best.accuracy);
 
-  // Block if spoof score exceeds threshold
-  const blocked = spoofScore >= 45;
+  // Block if spoof score exceeds threshold.
+  // Threshold 60: indoor WiFi positioning (stable coords + fixed accuracy +
+  // altitude 0 + fast response) scores ~20-35 max. Spoofers with perfect
+  // accuracy, teleportation, or multiple anomalies score 60+.
+  // Sophisticated spoofers mimicking WiFi behaviour are caught by other
+  // layers: liveness detection, face recognition, and campus geofence.
+  const blocked = spoofScore >= 60;
 
   return {
     lat: best.lat,
