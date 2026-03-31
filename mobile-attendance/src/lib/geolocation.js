@@ -33,7 +33,7 @@ const CAMPUS_POLYGON_FEATURE =
 // The raw polygon traces the fence; the buffered version adds ~25m padding
 // so a student standing just inside doesn't get marked "out of range"
 // due to GPS multipath/bounce from nearby buildings.
-const GPS_BUFFER_M = parseFloat(import.meta.env.VITE_GPS_BUFFER_M) || 25;
+const GPS_BUFFER_M = parseFloat(import.meta.env.VITE_GPS_BUFFER_M) || 10;
 const CAMPUS_POLYGON_BUFFERED = CAMPUS_POLYGON_FEATURE
   ? buffer(CAMPUS_POLYGON_FEATURE, GPS_BUFFER_M, { units: 'meters' })
   : null;
