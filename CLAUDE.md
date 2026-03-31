@@ -118,7 +118,7 @@ final-face/                         # Main repo (icannDevTeam/final-face)
 | **Firestore writes will be denied** | `mobile-attendance/src/lib/firebase.js`, `firestore.rules` | Firestore rules require `request.auth != null` but mobile app never initializes Firebase Auth — all writes silently fail |
 | **Missing PWA icons** | `mobile-attendance/public/sw.js:8-10` | Service worker precaches `icon-192.png`, `icon-512.png`, `apple-touch-icon.png` — none exist in `public/` |
 | **Logo 404** | `mobile-attendance/src/pages/ScanPage.jsx:216` | References `/logo.jpe` — unusual extension, likely a typo |
-| **Late cutoff duplicated & divergent** | `backend/attendance_listener.py:55`, `mobile-attendance/src/lib/api.js:97` | Hardcoded `08:15` in two places (Python + JS) with no shared constant — easy to get out of sync |
+| **Late cutoff duplicated & divergent** | `backend/attendance_listener.py:55`, `mobile-attendance/src/lib/api.js:97` | Late cutoff synced to `07:30` across all 5 locations but still hardcoded — no shared constant |
 | **WIB time uses naive UTC+7 offset** | `api.js:22`, `attendance-monitor.js:24` | `Date.now() + 7*3600*1000` — no DST/clock-drift handling |
 
 ## Technical Debt
@@ -153,6 +153,9 @@ final-face/                         # Main repo (icannDevTeam/final-face)
 | 2026-03-02 | Created CLAUDE.md for session persistence | Track project context across Claude sessions |
 | 2026-03-02 | Set Vite root explicitly in vite.config.js | Vite was resolving wrong root when run from workspace directory |
 | 2026-03-02 | CSS Modules for HomePage | Consistent with ScanPage pattern, no Tailwind dependency |
+| 2026-03-31 | GPS anti-spoofing + liveness + Firestore lockdown | Close critical security loop: fake GPS, photo attacks, open Firestore |
+| 2026-03-07 | Albert Arthur homeroom = 4C (not 5C) | Storage folder `4C/Albert Arthur` is authoritative — reflects actual classroom |
+| 2026-03-07 | Name-based fallback enrichment | Extra safety net: if employeeNo lookup misses, fall back to matching by student name |
 
 ## Session History
 
@@ -164,6 +167,15 @@ final-face/                         # Main repo (icannDevTeam/final-face)
 | 2026-03-02 | Built InstallPrompt.jsx — PWA install banner with beforeinstallprompt |
 | 2026-03-02 | Fixed broken SVG path in fingerprint icon, fixed Vite root config |
 | 2026-03-06 | Repository restructure — Python → `backend/`, web-dataset-collector as git submodule, requirements.txt, README rewrite |
+| 2026-03-07 | V2 dashboard with sidebar, real Firestore data, analytics wired with multi-day data |
+| 2026-03-07 | Added accuracy/confidence tracking to analytics + mobile check-in |
+| 2026-03-07 | Fixed CORS seeding (base64 data URLs), fixed analytics metadata enrichment |
+| 2026-03-07 | Fixed 6 HEX card IDs + CEDRIC01 missing homeroom in student_metadata (Firestore + local JSON) |
+| 2026-03-07 | Fixed Albert Arthur homeroom 5C→4C (matching Storage folder), backfilled 5 attendance records |
+| 2026-03-07 | Added name-based fallback enrichment to analytics.js and today.js |
+| 2026-03-07 | Cleaned malicious data: path traversal `test4`, duplicate Steven Logan Halim entries, test entries |
+| 2026-03-07 | Analytics now shows 0 "Unknown" class (was 4) — all 27 scans attributed to 4A/4C/6B |
+| 2026-03-31 | Critical security hardening: GPS anti-spoofing, liveness detection enabled, face match threshold tightened, Firestore rules locked down |
 
 ---
 *Update after each session with decisions, changes, and learnings.*

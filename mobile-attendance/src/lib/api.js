@@ -135,6 +135,8 @@ export async function checkIn(studentId, studentName, location, metadata = {}) {
     } : null,
     distance: location.distance || 0,
     ...(typeof metadata.confidence === 'number' ? { confidence: metadata.confidence / 100 } : {}),
+    ...(typeof location.spoofScore === 'number' ? { gpsSpoofScore: location.spoofScore } : {}),
+    livenessVerified: metadata.livenessVerified === true,
     updatedAt: new Date().toISOString(),
   };
 

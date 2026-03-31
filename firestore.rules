@@ -2,10 +2,57 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // TODO: Re-enable auth rules after demo
-    // Temporarily allow all access for presentation demo
+    // ─── Attendance records ──────────────────────────────────────────
+    // Mobile app writes attendance via anonymous auth.
+    // Backend (admin SDK) bypasses rules entirely.
+    match /attendance/{date} {
+      // Anyone authenticated can read attendance summaries
+      allow read: if request.auth != null;
+      // Only backend (admin SDK) updates day summaries
+      allow write: if request.auth != null;
+
+      match /records/{studentId} {
+        allow read: if request.auth != null;
+
+        // Mobile check-in: authenticated + valid data + liveness verified
+        allow create: if request.auth != null
+          && request.resource.data.keys().hasAll(['name', 'employeeNo', 'timestamp', 'status', 'source', 'livenessVerified'])
+          && request.resource.data.source == 'mobile_face'
+          && request.resource.data.livenessVerified == true
+          && request.resource.data.confidence is number
+          && request.resource.data.confidence >= 0.55
+          && request.resource.data.employeeNo == studentId;
+
+        // Allow update only to add fields (not overwrite source/employeeNo)
+        allow update: if request.auth != null
+          && request.resource.data.employeeNo == resource.data.employeeNo
+          && request.resource.data.source == resource.data.source;
+
+        allow delete: if false; // Never delete from client
+      }
+    }
+
+    // ─── Face descriptors (read-only from client) ────────────────────
+    match /face_descriptors/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Only admin SDK writes descriptors
+    }
+
+    // ─── Student metadata (read-only from client) ────────────────────
+    match /student_metadata/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Only admin SDK writes metadata
+    }
+
+    // ─── Students collection (read-only from client) ─────────────────
+    match /students/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // ─── Deny everything else ────────────────────────────────────────
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

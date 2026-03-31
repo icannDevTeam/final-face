@@ -230,7 +230,8 @@ function parseLabel(label) {
  */
 export async function detectAndMatch(videoEl, options = {}) {
   const {
-    matchThreshold = 0.5, // Euclidean distance threshold (lower = stricter)
+    matchThreshold = 0.42, // Euclidean distance threshold (tightened to reduce false positives)
+    minConfidence  = 60,   // minimum confidence % to accept a match
   } = options;
 
   if (!modelsLoaded) throw new Error('Models not loaded');
@@ -238,7 +239,7 @@ export async function detectAndMatch(videoEl, options = {}) {
 
   // Detect single best face with landmarks + descriptor
   const result = await faceapi
-    .detectSingleFace(videoEl, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+    .detectSingleFace(videoEl, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.65 }))
     .withFaceLandmarks()
     .withFaceDescriptor();
 
@@ -261,6 +262,17 @@ export async function detectAndMatch(videoEl, options = {}) {
 
   const student = parseLabel(bestMatch.label);
   const confidence = Math.round((1 - bestMatch.distance) * 100);
+
+  // Reject matches below minimum confidence threshold
+  if (confidence < minConfidence) {
+    return {
+      matched: false,
+      reason: 'low_confidence',
+      message: `Match confidence too low (${confidence}%). Please try again with better lighting.`,
+      distance: bestMatch.distance,
+      confidence,
+    };
+  }
 
   return {
     matched: true,
