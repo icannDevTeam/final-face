@@ -2,14 +2,18 @@
 """
 attendance_listener.py — Hikvision Live Event Stream Listener
 ==============================================================
-Connects to the DS-K1T341AMF alertStream (multipart MIME over HTTP),
-parses face-recognition events in real time, and stores attendance
-records to:
+Connects to Hikvision face terminals via alertStream (multipart MIME
+over HTTP), parses face-recognition events in real time, and stores
+attendance records to:
   1. Local JSON files  → data/attendance/YYYY-MM-DD.json
   2. Firebase Firestore → collection "attendance/{date}/records"
 
-The device's AcsEventSearch endpoint is NOT supported on this firmware,
-so we use the persistent /ISAPI/Event/notification/alertStream instead.
+Catch-up sync:
+  On connect/reconnect, if the device supports AcsEvent search
+  (DS-K1T342MFX does, DS-K1T341AMF does NOT), the listener queries
+  missed events since the last recorded attendance and backfills them
+  before resuming the live stream. This means no attendance is lost
+  even if the server was down for hours.
 
 Event stream format:
   --MIME_boundary
@@ -20,9 +24,6 @@ Event stream format:
 
 Face verification events:
   majorEventType = 5, subEventType = 76
-
-NOTE: Device event timestamps are broken (show 1970-01-01) even though
-the system clock is correct. We use server-side timestamps instead.
 
 Usage:
   python attendance_listener.py                  # Run listener
@@ -255,6 +256,227 @@ def load_logged_today(date_str: str) -> dict:
     except Exception as e:
         print(f"  ⚠ Could not restore today's attendance: {e}")
     return result
+
+
+# ─── Catch-up sync (pull missed events from device) ──────────────────────────
+
+_event_search_supported = None  # None = unknown, True/False after first check
+
+def check_event_search_support():
+    """Probe whether this device supports AcsEvent search.
+    DS-K1T342MFX supports it, DS-K1T341AMF does NOT."""
+    global _event_search_supported
+    if _event_search_supported is not None:
+        return _event_search_supported
+
+    try:
+        now = datetime.now(WIB)
+        body = {
+            "AcsEventCond": {
+                "searchID": "probe",
+                "searchResultPosition": 0,
+                "maxResults": 1,
+                "major": 5,
+                "minor": 0,
+                "startTime": now.strftime("%Y-%m-%dT00:00:00+07:00"),
+                "endTime": now.strftime("%Y-%m-%dT23:59:59+07:00"),
+            }
+        }
+        challenge = get_digest_challenge()
+        uri = "/ISAPI/AccessControl/AcsEvent?format=json"
+        auth_header = build_digest_auth("POST", uri, challenge)
+        r = requests.post(
+            f"http://{HIKVISION_IP}{uri}",
+            json=body,
+            headers={"Authorization": auth_header},
+            timeout=10,
+        )
+        if r.status_code == 401:
+            invalidate_challenge()
+            challenge = get_digest_challenge()
+            auth_header = build_digest_auth("POST", uri, challenge)
+            r = requests.post(
+                f"http://{HIKVISION_IP}{uri}",
+                json=body,
+                headers={"Authorization": auth_header},
+                timeout=10,
+            )
+        if r.status_code == 200:
+            data = r.json()
+            if "AcsEvent" in data:
+                _event_search_supported = True
+                return True
+        _event_search_supported = False
+        return False
+    except Exception:
+        _event_search_supported = False
+        return False
+
+
+def get_last_recorded_time(date_str: str) -> str | None:
+    """Get the latest recorded attendance timestamp for a given date.
+    Returns ISO 8601 string or None if no records exist."""
+    filepath = DATA_DIR / f"{date_str}.json"
+    if not filepath.exists():
+        return None
+    try:
+        records = json.loads(filepath.read_text())
+        latest = None
+        for name, rec in records.items():
+            ts = rec.get("timestamp", "")
+            if ts and (latest is None or ts > latest):
+                latest = ts
+        if latest:
+            # Convert "YYYY-MM-DD HH:MM:SS" to ISO with timezone
+            dt = datetime.strptime(latest, "%Y-%m-%d %H:%M:%S").replace(tzinfo=WIB)
+            return dt.strftime("%Y-%m-%dT%H:%M:%S+07:00")
+    except Exception:
+        pass
+    return None
+
+
+def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: bool):
+    """Pull missed face-verification events from the device since last recorded
+    attendance and backfill them into local JSON + Firestore + BINUS API.
+
+    Only runs on devices that support AcsEvent search (DS-K1T342MFX).
+    Skips silently on unsupported devices (DS-K1T341AMF)."""
+
+    if not check_event_search_support():
+        print("  ℹ️  Event search not supported on this device — catch-up sync skipped")
+        return 0
+
+    now = datetime.now(WIB)
+
+    # Determine start time: last recorded event, or start of today
+    last_ts = get_last_recorded_time(today)
+    if last_ts:
+        # Start 1 second after last recorded event to avoid re-processing it
+        try:
+            last_dt = datetime.fromisoformat(last_ts)
+            start_dt = last_dt + timedelta(seconds=1)
+            start_time = start_dt.strftime("%Y-%m-%dT%H:%M:%S+07:00")
+        except Exception:
+            start_time = f"{today}T00:00:00+07:00"
+        print(f"  📡 Catch-up sync: searching events since {last_ts}")
+    else:
+        start_time = f"{today}T00:00:00+07:00"
+        print(f"  📡 Catch-up sync: searching events for full day {today}")
+
+    end_time = now.strftime("%Y-%m-%dT%H:%M:%S+07:00")
+
+    # Paginate through all missed events
+    pos = 0
+    batch_size = 30
+    synced = 0
+    seen_emp = set()
+
+    while True:
+        body = {
+            "AcsEventCond": {
+                "searchID": "catchup",
+                "searchResultPosition": pos,
+                "maxResults": batch_size,
+                "major": 5,
+                "minor": 0,
+                "startTime": start_time,
+                "endTime": end_time,
+            }
+        }
+        try:
+            challenge = get_digest_challenge()
+            uri = "/ISAPI/AccessControl/AcsEvent?format=json"
+            auth_header = build_digest_auth("POST", uri, challenge)
+            r = requests.post(
+                f"http://{HIKVISION_IP}{uri}",
+                json=body,
+                headers={"Authorization": auth_header},
+                timeout=15,
+            )
+            if r.status_code == 401:
+                invalidate_challenge()
+                challenge = get_digest_challenge()
+                auth_header = build_digest_auth("POST", uri, challenge)
+                r = requests.post(
+                    f"http://{HIKVISION_IP}{uri}",
+                    json=body,
+                    headers={"Authorization": auth_header},
+                    timeout=15,
+                )
+            if r.status_code != 200:
+                print(f"  ⚠ Catch-up: HTTP {r.status_code}")
+                break
+
+            data = r.json()
+            acs = data.get("AcsEvent", {})
+            total = int(acs.get("totalMatches", 0))
+            events = acs.get("InfoList", [])
+
+            if not events:
+                break
+
+            for evt in events:
+                minor = evt.get("minor", 0)
+                # Only face verification successes
+                if minor not in (75, 76, 104):
+                    continue
+
+                emp_no = evt.get("employeeNoString", "") or str(evt.get("employeeNo", ""))
+                name = evt.get("name", "") or name_map.get(emp_no, "")
+
+                if not emp_no or not name:
+                    continue
+
+                # Only first occurrence per student (dedup within catch-up)
+                if emp_no in seen_emp:
+                    continue
+                seen_emp.add(emp_no)
+
+                # Skip if already in today's dedup set
+                if emp_no in logged_today:
+                    continue
+
+                # Parse device timestamp
+                event_time_str = evt.get("time", "")
+                try:
+                    event_dt = datetime.fromisoformat(event_time_str)
+                    if event_dt.tzinfo is None:
+                        event_dt = event_dt.replace(tzinfo=WIB)
+                except Exception:
+                    event_dt = now
+
+                event_date = event_dt.strftime("%Y-%m-%d")
+                timestamp = event_dt.strftime("%Y-%m-%d %H:%M:%S")
+                status = determine_status(event_dt)
+
+                # Record it
+                logged_today[emp_no] = event_dt.timestamp()
+                is_late = status == "Late"
+                icon = "🔄⏰" if is_late else "🔄✅"
+                print(f"  {icon} [catch-up] [{timestamp}] {name} — {status}")
+
+                save_local(name, emp_no, timestamp, status, event_date)
+                fb_result = None
+                if use_firebase:
+                    fb_result = save_firebase(name, emp_no, timestamp, status, event_date)
+                if fb_result != "already_exists":
+                    upload_to_binus_api(name, emp_no, "", timestamp, status, is_late)
+                synced += 1
+
+            pos += len(events)
+            status_str = acs.get("responseStatusStrg", "")
+            if status_str != "MORE" or pos >= total:
+                break
+
+        except Exception as e:
+            print(f"  ⚠ Catch-up error: {e}")
+            break
+
+    if synced > 0:
+        print(f"  ✅ Catch-up sync complete: {synced} missed record(s) backfilled")
+    else:
+        print(f"  ✅ Catch-up sync: no missed events")
+    return synced
 
 
 # ─── Name lookup from device ─────────────────────────────────────────────────
@@ -539,9 +761,22 @@ def run_listener(use_firebase=True):
     logged_today = load_logged_today(today)
     count = 0
     retry_delay = 5
+    first_connect = True
 
     while True:
         try:
+            # ── Catch-up sync on (re)connect ──────────────────────────
+            if first_connect:
+                print("📡 Running catch-up sync for missed events...")
+            else:
+                print("📡 Reconnected — running catch-up sync...")
+
+            # Refresh today in case of date rollover during downtime
+            today = datetime.now(WIB).strftime("%Y-%m-%d")
+            caught = catchup_sync(name_map, logged_today, today, use_firebase)
+            count += caught
+            first_connect = False
+
             print(f"🔗 Connecting to event stream...")
             
             # Get digest challenge and build auth header
@@ -608,10 +843,57 @@ def run_listener(use_firebase=True):
             retry_delay = min(retry_delay * 2, 60)
 
 
+def run_catchup(dates: list[str], use_firebase: bool = True):
+    """One-shot catch-up sync for specified dates, then exit."""
+    print("=" * 60)
+    print("  Hikvision Catch-up Sync")
+    print("=" * 60)
+    print(f"  Device:    {HIKVISION_IP}")
+    print(f"  Dates:     {', '.join(dates)}")
+    print(f"  Firebase:  {'enabled' if use_firebase else 'disabled'}")
+    print()
+
+    name_map = build_name_map()
+    print(f"  {len(name_map)} user(s) enrolled")
+
+    if not check_event_search_support():
+        print("\n❌ This device does not support event search. Catch-up sync unavailable.")
+        sys.exit(1)
+
+    if METADATA_ENABLED:
+        student_metadata.load_from_firebase()
+    if use_firebase:
+        get_firestore()
+    print()
+
+    total = 0
+    for date_str in dates:
+        print(f"── {date_str} ──")
+        logged = load_logged_today(date_str)
+        caught = catchup_sync(name_map, logged, date_str, use_firebase)
+        total += caught
+        print()
+
+    print(f"═══ Done. {total} record(s) backfilled across {len(dates)} day(s). ═══")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Hikvision attendance event listener")
     parser.add_argument("--no-firebase", action="store_true", help="Disable Firebase sync")
+    parser.add_argument("--catchup", action="store_true", help="One-shot catch-up sync (pull missed events), then exit")
+    parser.add_argument("--date", type=str, help="Specific date to catch up (YYYY-MM-DD). Can be repeated.", action="append")
+    parser.add_argument("--days", type=int, help="Catch up the last N days (default: 1 = today only)")
     args = parser.parse_args()
 
-    run_listener(use_firebase=not args.no_firebase)
+    if args.catchup:
+        if args.date:
+            dates = args.date
+        elif args.days:
+            today = datetime.now(WIB)
+            dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(args.days)]
+        else:
+            dates = [datetime.now(WIB).strftime("%Y-%m-%d")]
+        run_catchup(dates, use_firebase=not args.no_firebase)
+    else:
+        run_listener(use_firebase=not args.no_firebase)

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Device 1 (DS-K1T341AMF)",
+    "ip": "10.26.80.65",
+    "password": "password.123",
+    "gateway": "10.26.80.1",
+    "dns": "10.26.200.200",
+    "enabled": true
+  },
+  {
+    "name": "Device 2 (DS-K1T342MFX)",
+    "ip": "10.26.30.59",
+    "password": "password.406013",
+    "dns": "10.26.200.200",
+    "enabled": false,
+    "note": "Powered off. IP confirmed .59 on 2026-04-06"
+  },
+  {
+    "name": "Device 3 (DS-K1T342MFX)",
+    "ip": "10.26.30.201",
+    "password": "password.406013",
+    "dns": "10.26.200.200",
+    "enabled": false,
+    "note": "Powered off. Serial: E4034991. Static IP set 2026-04-02"
+  }
+]

@@ -18,7 +18,16 @@ const path = require('path');
 const fs = require('fs');
 const admin = require('firebase-admin');
 
-// Force pure-JS TF backend (no native bindings needed)
+// Force pure-JS TF backend — block native tfjs-node from loading
+const Module = require('module');
+const origResolveFilename = Module._resolveFilename;
+Module._resolveFilename = function (request, ...args) {
+  if (request === '@tensorflow/tfjs-node') {
+    return origResolveFilename.call(this, '@tensorflow/tfjs', ...args);
+  }
+  return origResolveFilename.call(this, request, ...args);
+};
+
 const tf = require('@tensorflow/tfjs');
 
 // ── Canvas polyfill for Node.js ──
