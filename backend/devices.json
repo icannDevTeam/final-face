@@ -1,6 +1,6 @@
 [
   {
-    "name": "Device 1 (DS-K1T341AMF)",
+    "name": "Basement 1 Terminal (DS-K1T341AMF)",
     "ip": "10.26.80.65",
     "password": "password.123",
     "gateway": "10.26.80.1",
