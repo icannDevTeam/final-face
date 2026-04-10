@@ -58,7 +58,9 @@ def emp_no(name):
 # ─── Device Client ──────────────────────────────────────────────────────────
 
 class DeviceClient:
-    def __init__(self, ip, user="admin", password="password.123"):
+    def __init__(self, ip, user="admin", password=None):
+        if not password:
+            raise ValueError("Device password is required")
         self.ip = ip
         self.user = user
         self.password = password

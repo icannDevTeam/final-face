@@ -68,6 +68,11 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'IdStudent is required' });
   }
 
+  // Validate IdStudent format — numeric only, 7-12 digits
+  if (!/^\d{7,12}$/.test(String(IdStudent))) {
+    return res.status(400).json({ error: 'Invalid IdStudent format' });
+  }
+
   const apiKey = process.env.BINUS_API_KEY;
   if (!apiKey) {
     return res.status(500).json({ error: 'BINUS_API_KEY not configured' });
@@ -110,9 +115,9 @@ export default async function handler(req, res) {
 
     const errorMsg = result.message || result.errorMessage || result.errors || 'Unknown error';
     console.error('BINUS attendance insert failed:', errorMsg);
-    return res.status(502).json({ error: errorMsg });
+    return res.status(502).json({ error: 'Attendance submission failed' });
   } catch (err) {
     console.error('BINUS API proxy error:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }

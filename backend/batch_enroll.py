@@ -48,7 +48,9 @@ FACE_SERVER_PORT = 8899
 class DeviceClient:
     """Wrapper for Hikvision ISAPI calls."""
 
-    def __init__(self, ip, user="admin", password="password.123"):
+    def __init__(self, ip, user="admin", password=None):
+        if not password:
+            raise ValueError("Device password is required")
         self.ip = ip
         self.base = f"http://{ip}"
         self.session = requests.Session()

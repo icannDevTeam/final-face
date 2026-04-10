@@ -54,7 +54,9 @@ import student_metadata
 
 HIKVISION_IP   = os.getenv("HIKVISION_IP", "10.26.30.200")
 HIKVISION_USER = os.getenv("HIKVISION_USER", "admin")
-HIKVISION_PASS = os.getenv("HIKVISION_PASS", "password.123")
+HIKVISION_PASS = os.getenv("HIKVISION_PASS")
+if not HIKVISION_PASS:
+    raise SystemExit("FATAL: HIKVISION_PASS environment variable is required")
 HIKVISION_BASE = f"http://{HIKVISION_IP}"
 HIKVISION_AUTH = HTTPDigestAuth(HIKVISION_USER, HIKVISION_PASS)
 POLL_INTERVAL  = int(os.getenv("POLL_INTERVAL", "3"))

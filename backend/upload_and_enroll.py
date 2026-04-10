@@ -180,7 +180,9 @@ def phase1_upload_to_firebase(students, dry_run=False):
 class DeviceClient:
     """Hikvision ISAPI wrapper with auto-reconnect on auth failures."""
 
-    def __init__(self, ip, user="admin", password="password.123"):
+    def __init__(self, ip, user="admin", password=None):
+        if not password:
+            raise ValueError("Device password is required")
         self.ip = ip
         self.user = user
         self.password = password

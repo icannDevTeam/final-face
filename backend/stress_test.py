@@ -25,12 +25,12 @@ LOCAL_BASE = "http://localhost:3000"
 VERCEL_BASE = "https://dataset-sigma.vercel.app"
 
 STUDENT_IDS = [
-    "1870001744",  # Connor Henry Owen
-    "1870002777",  # Ayla Madina Zulkarnain
-    "2070003324",  # Cedric Carrington Cahaya
-    "2170003338",  # Anderson Ian Roesmin
-    "2370007317",  # Benjamin Arandra Siregar
-    "2570010026",  # Akshay Azahran Jetty
+    "9990000001",  # Test Student A
+    "9990000002",  # Test Student B
+    "9990000003",  # Test Student C
+    "9990000004",  # Test Student D
+    "9990000005",  # Test Student E
+    "9990000006",  # Test Student F
 ]
 
 # Simulated concurrent students (repeat IDs to simulate 30 students)
