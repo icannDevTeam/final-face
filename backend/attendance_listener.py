@@ -173,11 +173,29 @@ except Exception:
     METADATA_ENABLED = False
 
 
+def resolve_employee_no(emp_no: str) -> str:
+    """Resolve HEX card employeeNo to the real student employeeNo.
+
+    If the metadata entry for emp_no has a 'linkedTo' field, return the
+    linked (real) employeeNo instead.  This collapses HEX card events
+    to the same identity as face-match events.
+    """
+    if not METADATA_ENABLED:
+        return emp_no
+    meta = student_metadata.get_student(emp_no)
+    if meta:
+        linked = meta.get("linkedTo", "")
+        if linked:
+            return linked
+    return emp_no
+
+
 def upload_to_binus_api(name: str, emp_no: str, class_name: str, timestamp: str, status: str, is_late: bool):
     """Upload attendance record to Binus School API.
 
     Looks up the student's IdStudent and IdBinusian from the metadata mapping
     (populated during enrollment), then calls the B.2 attendance insert API.
+    Follows linkedTo chain for HEX card entries.
     """
     if not API_INTEGRATE_ENABLED:
         print(f"  ⚠ Binus API module not available")
@@ -190,9 +208,22 @@ def upload_to_binus_api(name: str, emp_no: str, class_name: str, timestamp: str,
     if METADATA_ENABLED:
         meta = student_metadata.get_student(emp_no)
         if meta:
-            id_student = meta.get("idStudent", "")
-            id_binusian = meta.get("idBinusian", "")
-            print(f"  📎 Metadata found: IdStudent={id_student}, IdBinusian={id_binusian}")
+            # Follow linkedTo chain for HEX card entries
+            linked = meta.get("linkedTo", "")
+            if linked:
+                linked_meta = student_metadata.get_student(linked)
+                if linked_meta:
+                    id_student = linked_meta.get("idStudent", "") or meta.get("idStudent", "")
+                    id_binusian = linked_meta.get("idBinusian", "") or meta.get("idBinusian", "")
+                    print(f"  📎 Metadata found (via linkedTo {linked}): IdStudent={id_student}, IdBinusian={id_binusian}")
+                else:
+                    id_student = meta.get("idStudent", "")
+                    id_binusian = meta.get("idBinusian", "")
+                    print(f"  📎 Metadata found (linkedTo {linked} missing): IdStudent={id_student}, IdBinusian={id_binusian}")
+            else:
+                id_student = meta.get("idStudent", "")
+                id_binusian = meta.get("idBinusian", "")
+                print(f"  📎 Metadata found: IdStudent={id_student}, IdBinusian={id_binusian}")
         else:
             # Try lookup by name as fallback
             meta = student_metadata.find_by_name(name)
@@ -427,13 +458,17 @@ def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: b
                 if not emp_no or not name:
                     continue
 
+                # Resolve HEX card → real student ID for dedup
+                real_emp_no = resolve_employee_no(emp_no)
+
                 # Only first occurrence per student (dedup within catch-up)
-                if emp_no in seen_emp:
+                if real_emp_no in seen_emp:
                     continue
+                seen_emp.add(real_emp_no)
                 seen_emp.add(emp_no)
 
-                # Skip if already in today's dedup set
-                if emp_no in logged_today:
+                # Skip if already in today's dedup set (check both HEX and real)
+                if real_emp_no in logged_today or emp_no in logged_today:
                     continue
 
                 # Parse device timestamp
@@ -449,18 +484,25 @@ def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: b
                 timestamp = event_dt.strftime("%Y-%m-%d %H:%M:%S")
                 status = determine_status(event_dt)
 
-                # Record it
+                # Record it (mark both HEX and real as logged)
                 logged_today[emp_no] = event_dt.timestamp()
+                logged_today[real_emp_no] = event_dt.timestamp()
                 is_late = status == "Late"
                 icon = "🔄⏰" if is_late else "🔄✅"
-                print(f"  {icon} [catch-up] [{timestamp}] {name} — {status}")
+                if emp_no != real_emp_no:
+                    print(f"  {icon} [catch-up] [{timestamp}] {name} — {status} (HEX {emp_no} → {real_emp_no})")
+                else:
+                    print(f"  {icon} [catch-up] [{timestamp}] {name} — {status}")
 
                 save_local(name, emp_no, timestamp, status, event_date)
                 fb_result = None
                 if use_firebase:
                     fb_result = save_firebase(name, emp_no, timestamp, status, event_date)
+                # Push to BINUS unless already confirmed pushed
                 if fb_result != "already_exists":
-                    upload_to_binus_api(name, emp_no, "", timestamp, status, is_late)
+                    binus_ok = upload_to_binus_api(name, emp_no, "", timestamp, status, is_late)
+                    if binus_ok:
+                        mark_binus_pushed(emp_no, event_date)
                 synced += 1
 
             pos += len(events)
@@ -612,6 +654,7 @@ def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str:
             "homeroom": homeroom,
             "grade": grade,
             "source": "hikvision_terminal",
+            "binusPushed": False,
             "updatedAt": datetime.now(WIB).isoformat(),
         })
         # Also update the day summary
@@ -621,6 +664,18 @@ def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str:
     except Exception as e:
         print(f"  ⚠ Firestore write failed: {e}")
         return None
+
+
+def mark_binus_pushed(emp_no: str, date_str: str):
+    """Mark a Firestore attendance record as successfully pushed to BINUS API."""
+    db = get_firestore()
+    if not db:
+        return
+    try:
+        doc_ref = db.collection("attendance").document(date_str).collection("records").document(emp_no)
+        doc_ref.update({"binusPushed": True, "binusPushedAt": datetime.now(WIB).isoformat()})
+    except Exception as e:
+        print(f"  ⚠ Failed to mark binusPushed for {emp_no}: {e}")
 
 
 # ─── Event stream parser ─────────────────────────────────────────────────────
@@ -698,15 +753,24 @@ def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
                 print(f"\n📅 New day: {today}")
                 logged_today.update(load_logged_today(today))
 
-            # Skip if already logged within window
-            if emp_no in logged_today:
-                elapsed = now.timestamp() - logged_today[emp_no]
-                if elapsed < DUPLICATE_WINDOW:
-                    hrs = (DUPLICATE_WINDOW - elapsed) / 3600
-                    print(f"  ℹ️  {name} — Already Logged ✓ (next allowed in {hrs:.1f}h)")
-                    continue
+            # Resolve HEX card → real student ID for dedup
+            real_emp_no = resolve_employee_no(emp_no)
+
+            # Skip if already logged within window (check both HEX and real)
+            already_logged = False
+            for check_no in (emp_no, real_emp_no):
+                if check_no in logged_today:
+                    elapsed = now.timestamp() - logged_today[check_no]
+                    if elapsed < DUPLICATE_WINDOW:
+                        hrs = (DUPLICATE_WINDOW - elapsed) / 3600
+                        print(f"  ℹ️  {name} — Already Logged ✓ (next allowed in {hrs:.1f}h)")
+                        already_logged = True
+                        break
+            if already_logged:
+                continue
 
             logged_today[emp_no] = now.timestamp()
+            logged_today[real_emp_no] = now.timestamp()
             timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
             status = determine_status(now)
 
@@ -826,9 +890,11 @@ def run_listener(use_firebase=True):
                 fb_result = None
                 if use_firebase:
                     fb_result = save_firebase(name, emp_no, timestamp, status, date_str)
-                # Only push to BINUS API if this is a NEW record (not already captured by mobile)
+                # Push to BINUS unless already confirmed pushed
                 if fb_result != "already_exists":
-                    upload_to_binus_api(name, emp_no, "", timestamp, status, is_late)
+                    binus_ok = upload_to_binus_api(name, emp_no, "", timestamp, status, is_late)
+                    if binus_ok:
+                        mark_binus_pushed(emp_no, date_str)
 
         except requests.exceptions.ConnectionError:
             print(f"\n⚠ Connection lost — reconnecting in {retry_delay}s...")
