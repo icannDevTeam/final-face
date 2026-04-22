@@ -68,6 +68,7 @@ class DeviceListener:
         env = os.environ.copy()
         env["HIKVISION_IP"] = self.ip
         env["HIKVISION_PASS"] = self.password
+        env["HIKVISION_DEVICE_NAME"] = self.name
         env["PYTHONUNBUFFERED"] = "1"
 
         cmd = [sys.executable, str(LISTENER_SCRIPT)] + self.extra_args

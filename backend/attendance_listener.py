@@ -35,6 +35,8 @@ import sys
 import json
 import re
 import time
+import fcntl
+import tempfile
 import hashlib
 import signal
 from datetime import datetime, timedelta, timezone
@@ -50,6 +52,7 @@ load_dotenv()
 HIKVISION_IP   = os.getenv("HIKVISION_IP", "10.26.30.200")
 HIKVISION_USER = os.getenv("HIKVISION_USER", "admin")
 HIKVISION_PASS = os.getenv("HIKVISION_PASS")
+HIKVISION_DEVICE_NAME = os.getenv("HIKVISION_DEVICE_NAME", HIKVISION_IP)
 if not HIKVISION_PASS:
     raise SystemExit("FATAL: HIKVISION_PASS environment variable is required")
 
@@ -496,15 +499,15 @@ def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: b
                 else:
                     print(f"  {icon} [catch-up] [{timestamp}] {name} — {status}")
 
-                save_local(name, emp_no, timestamp, status, event_date)
+                save_local(name, real_emp_no, timestamp, status, event_date, scanned_emp_no=emp_no)
                 fb_result = None
                 if use_firebase:
-                    fb_result = save_firebase(name, emp_no, timestamp, status, event_date)
+                    fb_result = save_firebase(name, real_emp_no, timestamp, status, event_date, scanned_emp_no=emp_no)
                 # Push to BINUS unless already confirmed pushed
                 if fb_result != "already_exists":
-                    binus_ok = upload_to_binus_api(name, emp_no, "", timestamp, status, is_late)
+                    binus_ok = upload_to_binus_api(name, real_emp_no, "", timestamp, status, is_late)
                     if binus_ok:
-                        mark_binus_pushed(emp_no, event_date)
+                        mark_binus_pushed(real_emp_no, event_date)
                 synced += 1
 
             pos += len(events)
@@ -595,29 +598,49 @@ def determine_status(dt: datetime) -> str:
     return "Late" if dt > cutoff else "Present"
 
 
-def save_local(name: str, emp_no: str, timestamp: str, status: str, date_str: str):
-    """Append attendance record to local JSON file."""
+def save_local(name: str, emp_no: str, timestamp: str, status: str, date_str: str, scanned_emp_no: str | None = None):
+    """Append attendance record to local JSON file.
+
+    Uses fcntl.flock() for exclusive locking so multiple listener processes
+    can safely write to the same date file without corruption.
+    Writes to a temp file first, then atomically renames.
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     filepath = DATA_DIR / f"{date_str}.json"
+    lockpath = DATA_DIR / f".{date_str}.lock"
 
-    records = {}
-    if filepath.exists():
+    with open(lockpath, "w") as lockf:
+        fcntl.flock(lockf, fcntl.LOCK_EX)
         try:
-            records = json.loads(filepath.read_text())
-        except json.JSONDecodeError:
             records = {}
+            if filepath.exists():
+                try:
+                    records = json.loads(filepath.read_text())
+                except json.JSONDecodeError:
+                    records = {}
 
-    records[name] = {
-        "employeeNo": emp_no,
-        "timestamp": timestamp,
-        "status": status,
-        "late": status == "Late",
-    }
+            records[name] = {
+                "employeeNo": emp_no,
+                "scannedEmployeeNo": scanned_emp_no or emp_no,
+                "timestamp": timestamp,
+                "status": status,
+                "late": status == "Late",
+            }
 
-    filepath.write_text(json.dumps(records, indent=2, ensure_ascii=False))
+            # Write to temp file then atomic rename to prevent partial writes
+            fd, tmp = tempfile.mkstemp(dir=DATA_DIR, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(records, f, indent=2, ensure_ascii=False)
+                os.replace(tmp, filepath)  # atomic on POSIX
+            except BaseException:
+                os.unlink(tmp)
+                raise
+        finally:
+            fcntl.flock(lockf, fcntl.LOCK_UN)
 
 
-def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str: str):
+def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str: str, scanned_emp_no: str | None = None):
     """Write attendance record to Firestore, enriched with class/grade metadata.
     
     DEDUP: If a record already exists for this student today (e.g. from the
@@ -650,12 +673,15 @@ def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str:
         doc_ref.set({
             "name": name,
             "employeeNo": emp_no,
+            "scannedEmployeeNo": scanned_emp_no or emp_no,
             "timestamp": timestamp,
             "status": status,
             "late": status == "Late",
             "homeroom": homeroom,
             "grade": grade,
             "source": "hikvision_terminal",
+            "deviceName": HIKVISION_DEVICE_NAME,
+            "deviceIp": HIKVISION_IP,
             "binusPushed": False,
             "updatedAt": datetime.now(WIB).isoformat(),
         })
@@ -776,7 +802,7 @@ def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
             timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
             status = determine_status(now)
 
-            yield name, emp_no, timestamp, status, current_date
+            yield name, real_emp_no, emp_no, timestamp, status, current_date
             today = current_date  # update for next iteration
 
 
@@ -879,7 +905,7 @@ def run_listener(use_firebase=True):
             print(f"   ✓ Connected! Listening for face recognition events...\n")
             retry_delay = 5  # reset on success
 
-            for name, emp_no, timestamp, status, date_str in parse_event_stream(
+            for name, emp_no, scanned_emp_no, timestamp, status, date_str in parse_event_stream(
                 resp, name_map, logged_today, today
             ):
                 today = date_str
@@ -888,10 +914,10 @@ def run_listener(use_firebase=True):
                 icon = "⏰" if is_late else "✅"
                 print(f"{icon} [{timestamp}] {name} — {status}")
 
-                save_local(name, emp_no, timestamp, status, date_str)
+                save_local(name, emp_no, timestamp, status, date_str, scanned_emp_no=scanned_emp_no)
                 fb_result = None
                 if use_firebase:
-                    fb_result = save_firebase(name, emp_no, timestamp, status, date_str)
+                    fb_result = save_firebase(name, emp_no, timestamp, status, date_str, scanned_emp_no=scanned_emp_no)
                 # Push to BINUS unless already confirmed pushed
                 if fb_result != "already_exists":
                     binus_ok = upload_to_binus_api(name, emp_no, "", timestamp, status, is_late)
