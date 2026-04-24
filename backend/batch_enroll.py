@@ -474,11 +474,14 @@ def run_batch_enroll(device_ip, device_pass, dry_run=False, grade_filter=None, r
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Batch enroll students on Hikvision device")
     parser.add_argument("--device", default=os.getenv("HIKVISION_IP", "10.26.80.65"), help="Device IP")
-    parser.add_argument("--password", default=os.getenv("HIKVISION_PASS", "password.123"), help="Device password")
+    parser.add_argument("--password", default=os.getenv("HIKVISION_PASS"), help="Device password (or set HIKVISION_PASS env var)")
     parser.add_argument("--dry-run", action="store_true", help="Preview only")
     parser.add_argument("--grade", default=None, help="Only enroll specific grade (1-6)")
     parser.add_argument("--no-resume", action="store_true", help="Don't skip already-enrolled")
     args = parser.parse_args()
+
+    if not args.password:
+        parser.error("Device password required: use --password or set HIKVISION_PASS env var")
 
     run_batch_enroll(
         device_ip=args.device,

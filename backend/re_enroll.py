@@ -412,13 +412,16 @@ def re_enroll_students(students, device_ip, device_pass):
 def main():
     parser = argparse.ArgumentParser(description="Re-enroll students with outdated photos")
     parser.add_argument("--device", default=os.getenv("HIKVISION_IP", "10.26.80.65"))
-    parser.add_argument("--password", default=os.getenv("HIKVISION_PASS", "password.123"))
+    parser.add_argument("--password", default=os.getenv("HIKVISION_PASS"))
     parser.add_argument("--list", action="store_true", help="Show risk assessment list")
     parser.add_argument("--grade", default=None, help="Filter by grade")
     parser.add_argument("--student", default=None, help="Re-enroll specific student by name")
     parser.add_argument("--high-risk", action="store_true", help="Re-enroll all HIGH risk (4+ years)")
     parser.add_argument("--all", action="store_true", help="Re-enroll ALL students")
     args = parser.parse_args()
+
+    if not args.list and not args.password:
+        parser.error("Device password required: use --password or set HIKVISION_PASS env var")
 
     all_students = build_risk_list()
 

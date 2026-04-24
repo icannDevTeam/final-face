@@ -9,7 +9,7 @@
  *
  * This avoids redundant Firestore reads on every navigation / check-in.
  */
-import { db } from './firebase';
+import { db, auth } from './firebase';
 import {
   doc,
   getDoc,
@@ -207,9 +207,20 @@ async function syncToBinusApi(studentId) {
       return;
     }
 
+    // Get Firebase ID token for server-side verification
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      console.warn('No authenticated user — skipping BINUS API');
+      return;
+    }
+    const firebaseToken = await currentUser.getIdToken();
+
     const resp = await fetch('/api/binus-attendance', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${firebaseToken}`,
+      },
       body: JSON.stringify({ IdStudent: idStudent, IdBinusian: idBinusian }),
     });
 

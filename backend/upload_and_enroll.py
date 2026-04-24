@@ -443,12 +443,15 @@ def phase2_enroll_on_device(students, device_ip, device_pass, dry_run=False):
 def main():
     parser = argparse.ArgumentParser(description="Upload photos to Firebase + enroll on device")
     parser.add_argument("--device", default=os.getenv("HIKVISION_IP", "10.26.80.65"))
-    parser.add_argument("--password", default=os.getenv("HIKVISION_PASS", "password.123"))
+    parser.add_argument("--password", default=os.getenv("HIKVISION_PASS"))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--grade", default=None)
     parser.add_argument("--upload-only", action="store_true", help="Phase 1 only")
     parser.add_argument("--enroll-only", action="store_true", help="Phase 2 only")
     args = parser.parse_args()
+
+    if not args.password:
+        parser.error("Device password required: use --password or set HIKVISION_PASS env var")
 
     students, meta = load_new_students(args.grade)
     print(f"📋 {len(students)} new students to process")

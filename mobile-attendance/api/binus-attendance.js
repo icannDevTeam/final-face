@@ -3,15 +3,65 @@
  *
  * The mobile app calls this endpoint after a successful face-recognition
  * clock-in. This function:
- *   1. Authenticates with the BINUS School API (gets a bearer token)
- *   2. Inserts the attendance record via POST bss-add-simprug-attendance-fr
+ *   1. Verifies Firebase ID token (anonymous auth)
+ *   2. Rate-limits by IP (10 req/min)
+ *   3. Authenticates with the BINUS School API (gets a bearer token)
+ *   4. Inserts the attendance record via POST bss-add-simprug-attendance-fr
  *
  * Environment variables (set in Vercel dashboard):
  *   BINUS_API_KEY — Base64 API key for Basic auth
  *   BINUS_USER_ACTION — UserAction field (default: "TEACHER7")
+ *   FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY — Admin SDK
  */
 
 import process from 'node:process';
+import admin from 'firebase-admin';
+
+// ─── Firebase Admin init (singleton) ──────────────────────────────────
+function initFirebaseAdmin() {
+  if (admin.apps.length > 0) return;
+
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY || '';
+  if ((privateKey.startsWith('"') && privateKey.endsWith('"')) ||
+      (privateKey.startsWith("'") && privateKey.endsWith("'"))) {
+    privateKey = privateKey.slice(1, -1);
+  }
+  privateKey = privateKey.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n');
+
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      type: 'service_account',
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      private_key: privateKey,
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+    }),
+  });
+}
+
+// ─── In-memory rate limiter (per serverless instance) ─────────────────
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 10;           // 10 requests per window per IP
+const rateLimitMap = new Map();
+
+function isRateLimited(ip) {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitMap.set(ip, { windowStart: now, count: 1 });
+    return false;
+  }
+  entry.count++;
+  if (entry.count > RATE_LIMIT_MAX) return true;
+  return false;
+}
+
+// Clean up stale entries periodically (prevent memory leak in long-lived instances)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap) {
+    if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS * 2) rateLimitMap.delete(ip);
+  }
+}, RATE_LIMIT_WINDOW_MS * 2);
 
 // BINUS API only serves on HTTP port 80 (HTTPS port 443 returns 404)
 const BINUS_BASE = 'http://binusian.ws';
@@ -51,7 +101,7 @@ export default async function handler(req, res) {
   const corsOrigin = allowedOrigins.includes(origin) ? origin : allowedOrigins[0] || '';
   res.setHeader('Access-Control-Allow-Origin', corsOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Vary', 'Origin');
 
   if (req.method === 'OPTIONS') {
@@ -60,6 +110,27 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // ── Rate limiting ────────────────────────────────────────────────
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+  if (isRateLimited(clientIp)) {
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  }
+
+  // ── Firebase token verification ──────────────────────────────────
+  const authHeader = req.headers.authorization || '';
+  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!idToken) {
+    return res.status(401).json({ error: 'Missing Authorization header' });
+  }
+
+  try {
+    initFirebaseAdmin();
+    await admin.auth().verifyIdToken(idToken);
+  } catch (authErr) {
+    console.error('Firebase token verification failed:', authErr.message);
+    return res.status(401).json({ error: 'Invalid or expired token' });
   }
 
   const { IdStudent, IdBinusian } = req.body || {};
