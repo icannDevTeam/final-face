@@ -202,8 +202,8 @@ async function syncToBinusApi(studentId) {
     const idStudent = meta.idStudent || meta.IdStudent || '';
     const idBinusian = meta.idBinusian || meta.IdBinusian || '';
 
-    if (!idStudent) {
-      console.warn(`No IdStudent in metadata for ${studentId} — skipping BINUS API`);
+    if (!idStudent && !idBinusian) {
+      console.warn(`No IdStudent or IdBinusian in metadata for ${studentId} — skipping BINUS API`);
       return;
     }
 
@@ -318,33 +318,38 @@ export async function getAttendanceHistory(studentId, days = 14) {
   const cached = memGet(cacheKey, 5 * 60_000);
   if (cached) return cached;
 
-  const results = [];
   const today = getWIBNow();
 
+  // Build date strings, then fetch all docs in parallel — ~Nx faster than serial getDoc loop.
+  const dateStrs = [];
   for (let i = 0; i < days; i++) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().slice(0, 10);
+    dateStrs.push(d.toISOString().slice(0, 10));
+  }
 
-    try {
-      const docRef = doc(db, 'attendance', dateStr, 'records', String(studentId));
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
+  const fetched = await Promise.all(
+    dateStrs.map(async (dateStr) => {
+      try {
+        const docRef = doc(db, 'attendance', dateStr, 'records', String(studentId));
+        const snap = await getDoc(docRef);
+        if (!snap.exists()) return null;
         const data = snap.data();
-        results.push({
+        return {
           date: dateStr,
           timestamp: data.timestamp || dateStr,
           startTime: (data.timestamp || '').split(' ')[1] || '—',
           status: data.status || (data.late ? 'Late' : 'Present'),
           late: !!data.late,
           source: data.source || 'unknown',
-        });
+        };
+      } catch {
+        return null;
       }
-    } catch {
-      // Skip dates we can't read
-    }
-  }
+    })
+  );
 
+  const results = fetched.filter(Boolean);
   memSet(cacheKey, results);
   return results;
 }
