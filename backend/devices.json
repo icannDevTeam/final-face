@@ -2,7 +2,7 @@
   {
     "name": "Basement 1 Terminal (DS-K1T341AMF)",
     "ip": "10.26.80.65",
-    "password": "password.123",
+    "password_env": "HIKVISION_PASS_BASEMENT1",
     "gateway": "10.26.80.1",
     "dns": "10.26.200.200",
     "enabled": true
@@ -10,7 +10,7 @@
   {
     "name": "PYP Lobby Entrance (DS-K1T342MFX)",
     "ip": "10.26.30.59",
-    "password": "password.406013",
+    "password_env": "HIKVISION_PASS_PYP_LOBBY",
     "dns": "10.26.200.200",
     "enabled": true,
     "note": "IP confirmed .59 on 2026-04-06"
@@ -18,9 +18,10 @@
   {
     "name": "MYP Tower (DS-K1T342MFX)",
     "ip": "10.26.30.201",
-    "password": "password.406013",
+    "password_env": "HIKVISION_PASS_MYP_TOWER",
     "dns": "10.26.200.200",
     "enabled": true,
     "note": "Serial: E4034991. Static IP set 2026-04-02"
   }
 ]
+

@@ -179,13 +179,12 @@ def run_stress_test():
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB")
     print("=" * 60)
 
-    names = {
-        "1870001744": "Connor Henry Owen",
-        "1870002777": "Ayla Madina Zulkarnain",
-        "2070003324": "Cedric Carrington Cahaya",
-        "2170003338": "Anderson Ian Roesmin",
-        "2370007317": "Benjamin Arandra Siregar",
-        "2570010026": "Akshay Azahran Jetty",
+    # Test fixture IDs only — real student names/IDs must not live in repo.
+    # If you need realistic load, populate via env: STRESS_TEST_NAMES_JSON='{"id":"name"}'.
+    import json as _json
+    _env_names = os.environ.get("STRESS_TEST_NAMES_JSON")
+    names = _json.loads(_env_names) if _env_names else {
+        sid: f"Student {sid[-4:]}" for sid in SIMULATED_STUDENTS
     }
 
     # ── Phase 1: Sequential warm-up (1 request each) ──
@@ -199,7 +198,8 @@ def run_stress_test():
     print(f"  Vercel health: {'OK' if s2.successes else 'FAIL'} ({s2.times[0]*1000:.0f}ms)")
 
     s3 = Stats("Local lookup warmup")
-    test_student_lookup(LOCAL_BASE, "2570010026", s3)
+    _warm_id = SIMULATED_STUDENTS[0] if SIMULATED_STUDENTS else "9990000001"
+    test_student_lookup(LOCAL_BASE, _warm_id, s3)
     print(f"  Local lookup: {'OK' if s3.successes else 'FAIL'} ({s3.times[0]*1000:.0f}ms)")
 
     # ── Phase 2: Concurrent student lookups (local) ──

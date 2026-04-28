@@ -22,6 +22,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from devices_config import load_devices as _load_devices_resolved
+
 WIB = timezone(timedelta(hours=7))
 SCRIPT_DIR = Path(__file__).parent
 DEVICES_FILE = SCRIPT_DIR / "devices.json"
@@ -115,18 +117,12 @@ class DeviceListener:
 
 
 def load_devices() -> list[dict]:
-    """Load enabled devices from devices.json."""
-    if not DEVICES_FILE.exists():
-        print(f"✗ {DEVICES_FILE} not found")
-        sys.exit(1)
-
-    devices = json.loads(DEVICES_FILE.read_text())
-    enabled = [d for d in devices if d.get("enabled", True)]
-
+    """Load enabled devices with passwords resolved from env/devices.local.json."""
+    enabled = _load_devices_resolved()
     if not enabled:
-        print("✗ No enabled devices in devices.json")
+        print("✗ No enabled devices with resolvable passwords. "
+              "Check devices.json + devices.local.json / env vars.")
         sys.exit(1)
-
     return enabled
 
 
