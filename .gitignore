@@ -33,6 +33,9 @@ facial-attendance-binus-firebase-adminsdk.json
 .env.local
 # Local device password overrides (Hikvision)
 backend/devices.local.json
+# Monitoring stack secrets
+monitoring/.env
+monitoring/.env.local
 
 # ──────────────────────────────────────
 # Frontend / Vite / Node
