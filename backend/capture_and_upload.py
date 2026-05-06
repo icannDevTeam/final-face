@@ -251,42 +251,58 @@ def upload_to_firebase(local_path: str, student: dict, capture_num: int) -> str 
         bucket = fb_storage.bucket(app=app)
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        blob_path = (
-            f"face_dataset/"
-            f"{student['homeroom']}/"
-            f"{student['name']}/"
-            f"{ts}_capture_{capture_num}.jpg"
-        )
-        blob = bucket.blob(blob_path)
-        blob.upload_from_filename(local_path, content_type="image/jpeg")
-        blob.make_public()
-        url = blob.public_url
-        print(f"      ☁️   Uploaded → gs://{FIREBASE_BUCKET}/{blob_path}")
+        rel = f"{student['homeroom']}/{student['name']}/{ts}_capture_{capture_num}.jpg"
+        blob_path = f"face_dataset/{rel}"
+        if tenancy.legacy_paths_enabled():
+            blob = bucket.blob(blob_path)
+            blob.upload_from_filename(local_path, content_type="image/jpeg")
+            blob.make_public()
+            url = blob.public_url
+            print(f"      ☁️   Uploaded → gs://{FIREBASE_BUCKET}/{blob_path}")
+        else:
+            url = None
+        # Tenant-scoped dual-write
+        try:
+            tenant_path = f"{tenancy.storage_face_dataset_prefix()}/{rel}"
+            tblob = bucket.blob(tenant_path)
+            tblob.upload_from_filename(local_path, content_type="image/jpeg")
+            tblob.make_public()
+            if not url:
+                url = tblob.public_url
+            print(f"      ☁️   Tenant copy → gs://{FIREBASE_BUCKET}/{tenant_path}")
+        except Exception as te:
+            print(f"      ⚠️   Tenant storage dual-write failed (non-fatal): {te}")
 
         # Write metadata to Firestore
         try:
             db = fb_firestore.client(app=app)
-            doc_ref = db.collection("students").document(student["studentId"])
-            doc_ref.set(
-                {
-                    "studentId": student["studentId"],
-                    "name": student["name"],
-                    "gradeCode": student["gradeCode"],
-                    "gradeName": student["gradeName"],
-                    "homeroom": student["homeroom"],
-                    "lastUpdated": datetime.now().isoformat(),
-                },
-                merge=True,
-            )
-            # Sub-collection for individual captures
-            doc_ref.collection("captures").add({
+            student_payload = {
+                "studentId": student["studentId"],
+                "name": student["name"],
+                "gradeCode": student["gradeCode"],
+                "gradeName": student["gradeName"],
+                "homeroom": student["homeroom"],
+                "lastUpdated": datetime.now().isoformat(),
+            }
+            capture_payload = {
                 "storagePath": blob_path,
                 "url": url,
                 "captureNum": capture_num,
                 "capturedAt": datetime.now().isoformat(),
                 "source": "hikvision_device",
                 "imageSize": os.path.getsize(local_path),
-            })
+            }
+            if tenancy.legacy_paths_enabled():
+                doc_ref = db.collection("students").document(student["studentId"])
+                doc_ref.set(student_payload, merge=True)
+                doc_ref.collection("captures").add(capture_payload)
+            # Tenant-scoped dual-write
+            try:
+                t_doc = db.document(f"{tenancy.students_path()}/{student['studentId']}")
+                t_doc.set({**student_payload, "tenantId": tenancy.get_tenant_id()}, merge=True)
+                t_doc.collection("captures").add(capture_payload)
+            except Exception as te:
+                print(f"      ⚠️   Tenant Firestore dual-write failed (non-fatal): {te}")
         except Exception as e:
             print(f"      ⚠️   Firestore metadata write failed (non-fatal): {e}")
 

@@ -59,6 +59,176 @@ service cloud.firestore {
       allow read, update, delete: if false; // Admin SDK only
     }
 
+    // ════════════════════════════════════════════════════════════════
+    // Phase A1 — Tenant-scoped paths (multi-tenancy)
+    // ════════════════════════════════════════════════════════════════
+    // Auth tokens carry a custom claim `tenantId` and `role` set by the
+    // backend (Admin SDK). Anonymous mobile sessions do NOT carry these
+    // claims yet — for now we accept any authenticated user but require
+    // the `tenantId` claim to match when present.
+    //
+    // During the dual-read migration window the legacy root-level rules
+    // above remain active. Once cutover completes, those blocks should
+    // be removed and `match /{document=**} { allow read,write: if false }`
+    // restored as the deny-all backstop.
+
+    function callerTenant() {
+      return request.auth.token.tenantId;
+    }
+    function isTenantMember(tid) {
+      return request.auth != null
+        && (callerTenant() == tid
+            || !('tenantId' in request.auth.token)); // anonymous sessions allowed during transition
+    }
+    function callerRole() {
+      return request.auth.token.role;
+    }
+    function isTenantAdmin(tid) {
+      return isTenantMember(tid) && (callerRole() == 'owner' || callerRole() == 'admin');
+    }
+    function isTenantOwner(tid) {
+      return isTenantMember(tid) && callerRole() == 'owner';
+    }
+
+    match /tenants/{tid} {
+      allow read: if isTenantMember(tid);
+      allow write: if isTenantOwner(tid);
+
+      // ── Tenant settings ────────────────────────────────────────────
+      match /settings/{docId} {
+        allow read: if isTenantMember(tid);
+        allow write: if isTenantAdmin(tid);
+      }
+
+      // ── Tenant users (RBAC) ────────────────────────────────────────
+      match /users/{email} {
+        allow read: if isTenantAdmin(tid) || (isTenantMember(tid) && request.auth.token.email == email);
+        allow write: if isTenantOwner(tid);
+      }
+
+      // ── Students (admin-managed) ───────────────────────────────────
+      match /students/{studentId} {
+        allow read: if isTenantMember(tid);
+        allow write: if false; // Admin SDK only
+        match /images/{imageId} {
+          allow read: if isTenantMember(tid);
+          allow write: if false;
+        }
+      }
+
+      match /student_metadata/{docId} {
+        allow read: if isTenantMember(tid);
+        allow write: if false;
+      }
+
+      match /face_descriptors/{docId} {
+        allow read: if isTenantMember(tid);
+        allow write: if false;
+      }
+
+      // ── Attendance ─────────────────────────────────────────────────
+      match /attendance/{date} {
+        allow read: if isTenantMember(tid);
+        allow write: if isTenantMember(tid);
+
+        match /records/{studentId} {
+          allow read: if isTenantMember(tid);
+          allow create: if isTenantMember(tid)
+            && request.resource.data.keys().hasAll(['name', 'employeeNo', 'timestamp', 'status', 'source', 'livenessVerified'])
+            && request.resource.data.source == 'mobile_face'
+            && request.resource.data.livenessVerified == true
+            && request.resource.data.confidence is number
+            && request.resource.data.confidence >= 0.55
+            && request.resource.data.employeeNo == studentId;
+          allow update: if isTenantMember(tid)
+            && request.resource.data.employeeNo == resource.data.employeeNo
+            && request.resource.data.source == resource.data.source;
+          allow delete: if false;
+        }
+      }
+
+      // ── Spoof telemetry ────────────────────────────────────────────
+      match /spoof_attempts/{date}/logs/{logId} {
+        allow create: if isTenantMember(tid)
+          && request.resource.data.keys().hasAll(['studentId', 'studentName', 'reason', 'timestamp']);
+        allow read: if isTenantAdmin(tid);
+        allow update, delete: if false;
+      }
+
+      // ── Devices (admin only) ───────────────────────────────────────
+      match /devices/{deviceId} {
+        allow read: if isTenantAdmin(tid);
+        allow write: if false; // Admin SDK only (creds stay server-side)
+      }
+
+      // ── Privacy / consent (Phase B) ────────────────────────────────
+      match /consents/{studentId} {
+        allow read: if isTenantAdmin(tid);
+        allow write: if false; // Created via consent capture endpoint
+      }
+      match /policy_versions/{versionId} {
+        allow read: if isTenantMember(tid);
+        allow write: if false; // Immutable; written by admin script
+      }
+      match /data_requests/{requestId} {
+        allow read: if isTenantAdmin(tid);
+        allow write: if false; // Created by guardian-facing endpoint
+      }
+      match /erasure_log/{eventId} {
+        allow read: if isTenantOwner(tid);
+        allow write: if false; // Immutable audit record
+      }
+      match /biometric_access_log/{logId} {
+        allow read: if isTenantAdmin(tid);
+        allow write: if false; // Created by storage-access wrapper
+      }
+
+      // ── PickupGuard (chaperone pickup) ─────────────────────────────
+      // All chaperone & event writes go through Admin SDK only. The TV
+      // display reads pickup_events directly via Firestore (fallback when
+      // the Jetson SSE channel is unreachable) — display devices use a
+      // service-account-issued anonymous session whose token carries
+      // tenantId + role:'pickup-display'.
+      match /chaperones/{chaperoneId} {
+        allow read: if isTenantAdmin(tid)
+          || (isTenantMember(tid) && callerRole() == 'pickup-display');
+        allow write: if false;
+        match /authorizedStudents/{sid} {
+          allow read: if isTenantMember(tid);
+          allow write: if false;
+        }
+      }
+      match /pickup_events/{eventId} {
+        allow read: if isTenantMember(tid);
+        allow write: if false; // Listener (Admin SDK) only
+      }
+      match /pickup_overrides/{logId} {
+        allow read: if isTenantAdmin(tid);
+        allow write: if false; // Officer override page mints via API
+      }
+      match /security_incidents/{incidentId} {
+        // Append-only feed of unknown/suspended/reenroll-overdue chaperone scans.
+        // Admin-readable; only the Admin SDK (listener) writes.
+        allow read: if isTenantAdmin(tid);
+        allow write: if false;
+      }
+      match /pickup_onboarding/{recordId} {
+        // Parent-submitted records — created via token-gated API only.
+        // Admin reviews + approves; no client-side writes.
+        allow read: if isTenantAdmin(tid);
+        allow write: if false;
+      }
+      match /id_allocations/{name} {
+        allow read: if isTenantAdmin(tid);
+        allow write: if false; // Atomic increment via Admin SDK
+      }
+
+      // ── Catch-all under tenant ─────────────────────────────────────
+      match /{document=**} {
+        allow read, write: if false;
+      }
+    }
+
     // ─── Deny everything else ────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

@@ -335,16 +335,26 @@ export default function ScanPage() {
           setPhase('spoofed');
           // Log spoof attempt to Firestore for admin review
           try {
+            const tenancy = await import('../lib/tenancy');
             const date = new Date().toISOString().slice(0, 10);
             const logId = `${result.student?.id || 'unknown'}_${Date.now()}`;
-            await setDoc(doc(db, 'spoof_attempts', date, 'logs', logId), {
+            const payload = {
               studentId: result.student?.id || 'unknown',
               studentName: result.student?.name || 'Unknown',
               homeroom: result.student?.homeroom || '',
               reason: locErr.message,
               timestamp: new Date().toISOString(),
               userAgent: navigator.userAgent,
-            });
+            };
+            if (tenancy.legacyPathsEnabled()) {
+              await setDoc(doc(db, 'spoof_attempts', date, 'logs', logId), payload);
+            }
+            try {
+              await setDoc(
+                doc(db, tenancy.spoofAttemptPath(date, logId)),
+                { ...payload, tenantId: tenancy.getTenantId() },
+              );
+            } catch { /* best-effort */ }
           } catch { /* best effort logging */ }
           return;
         }

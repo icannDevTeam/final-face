@@ -36,6 +36,7 @@ from requests.auth import HTTPDigestAuth
 
 sys.path.insert(0, os.path.dirname(__file__))
 import student_metadata
+import tenancy
 
 WIB = timezone(timedelta(hours=7))
 DATA_DIR = Path(__file__).parent / "data"
@@ -182,11 +183,22 @@ def upload_to_firebase(local_path, student_name, homeroom):
             app = firebase_admin.initialize_app(cred, {"storageBucket": FIREBASE_BUCKET})
         bucket = fb_storage.bucket(app=app)
         ts = datetime.now(WIB).strftime("%Y%m%d_%H%M%S")
-        blob_path = f"face_dataset/{homeroom}/{student_name}/{ts}_device_capture.jpg"
-        blob = bucket.blob(blob_path)
-        blob.upload_from_filename(local_path, content_type="image/jpeg")
-        blob.make_public()
-        print(f"    ☁️  Firebase: {blob_path}")
+        rel = f"{homeroom}/{student_name}/{ts}_device_capture.jpg"
+        if tenancy.legacy_paths_enabled():
+            blob_path = f"face_dataset/{rel}"
+            blob = bucket.blob(blob_path)
+            blob.upload_from_filename(local_path, content_type="image/jpeg")
+            blob.make_public()
+            print(f"    ☁️  Firebase: {blob_path}")
+        # Tenant-scoped dual-write
+        try:
+            tenant_path = f"{tenancy.storage_face_dataset_prefix()}/{rel}"
+            tblob = bucket.blob(tenant_path)
+            tblob.upload_from_filename(local_path, content_type="image/jpeg")
+            tblob.make_public()
+            print(f"    ☁️  Tenant copy: {tenant_path}")
+        except Exception as te:
+            print(f"    ⚠️  Tenant storage dual-write failed (non-fatal): {te}")
     except Exception as e:
         print(f"    ⚠️  Firebase backup failed: {e}")
 

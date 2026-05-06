@@ -1,0 +1,1 @@
+/home/pandora/Downloads/final-face/web-dataset-collector/components/v2/KioskManager.js

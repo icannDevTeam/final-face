@@ -35,6 +35,8 @@ import requests
 from requests.auth import HTTPDigestAuth
 from dotenv import load_dotenv
 
+import tenancy
+
 load_dotenv()
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -128,7 +130,9 @@ def phase1_upload_to_firebase(students, dry_run=False):
         eno = emp_no(name)
         photo_url = (s.get("filePath") or "").strip()
         local_path = FACES_DIR / f"{eno}.jpg"
-        fb_path = f"face_dataset/{homeroom}/{name}/{eno}.jpg"
+        rel = f"{homeroom}/{name}/{eno}.jpg"
+        fb_path = f"face_dataset/{rel}"
+        tenant_path = f"{tenancy.storage_face_dataset_prefix()}/{rel}"
 
         print(f"[{i}/{len(students)}] {name} → {fb_path}")
 
@@ -159,13 +163,29 @@ def phase1_upload_to_firebase(students, dry_run=False):
         if blob.exists():
             print(f"  ☁️  Already in Firebase Storage")
             uploaded += 1
+            # Mirror to tenant path if missing
+            try:
+                tblob = bucket.blob(tenant_path)
+                if not tblob.exists():
+                    bucket.copy_blob(blob, bucket, tenant_path)
+                    print(f"  ☁️  Tenant copy: {tenant_path}")
+            except Exception as te:
+                print(f"  ⚠️  Tenant copy failed (non-fatal): {te}")
             continue
 
         # Step 3: Upload to Firebase Storage
         try:
-            blob.upload_from_filename(str(local_path), content_type="image/jpeg")
-            blob.make_public()
-            print(f"  ☁️  Uploaded to Firebase Storage ✅")
+            if tenancy.legacy_paths_enabled():
+                blob.upload_from_filename(str(local_path), content_type="image/jpeg")
+                blob.make_public()
+                print(f"  ☁️  Uploaded to Firebase Storage ✅")
+            try:
+                tblob = bucket.blob(tenant_path)
+                tblob.upload_from_filename(str(local_path), content_type="image/jpeg")
+                tblob.make_public()
+                print(f"  ☁️  Tenant copy: {tenant_path}")
+            except Exception as te:
+                print(f"  ⚠️  Tenant storage dual-write failed (non-fatal): {te}")
             uploaded += 1
         except Exception as e:
             print(f"  ❌ Firebase upload failed: {e}")

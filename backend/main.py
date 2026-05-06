@@ -291,12 +291,13 @@ def _upload_attendance_to_api(payload):
     """
     try:
         student_name = payload.pop("_studentName", "?")
-        if not payload.get("IdStudent"):
-            print(f"⚠️ API attendance skipped for {student_name}: no IdStudent in metadata")
+        if not payload.get("IdStudent") and not payload.get("IdBinusian"):
+            print(f"⚠️ API attendance skipped for {student_name}: no IdStudent or IdBinusian in metadata")
             return
         success = api_integrate.insert_student_attendance(payload)
         if success:
-            print(f"☁️ API attendance uploaded: {student_name} (ID:{payload.get('IdStudent')})")
+            primary = payload.get('IdStudent') or payload.get('IdBinusian')
+            print(f"☁️ API attendance uploaded: {student_name} (ID:{primary})")
         else:
             print(f"⚠️ API attendance upload returned failure for {student_name}")
     except Exception as e:

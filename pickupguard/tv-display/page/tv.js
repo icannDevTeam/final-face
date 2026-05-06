@@ -1,0 +1,1 @@
+/home/pandora/Downloads/final-face/web-dataset-collector/pages/pickup/tv.js

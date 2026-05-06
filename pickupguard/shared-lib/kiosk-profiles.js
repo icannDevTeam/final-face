@@ -1,0 +1,1 @@
+/home/pandora/Downloads/final-face/web-dataset-collector/lib/kiosk-profiles.js

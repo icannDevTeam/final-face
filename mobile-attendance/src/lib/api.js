@@ -20,6 +20,7 @@ import {
   orderBy,
 } from 'firebase/firestore';
 import { memGet, memSet, lsGet, lsSet, TTL } from './cache';
+import * as tenancy from './tenancy';
 
 // ─── WIB helpers ──────────────────────────────────────────────────────
 function getWIBNow() {
@@ -141,12 +142,24 @@ export async function checkIn(studentId, studentName, location, metadata = {}) {
   };
 
   try {
-    const docRef = doc(db, 'attendance', date, 'records', String(studentId));
-    await setDoc(docRef, record);
-
-    // Update day summary
-    const dayRef = doc(db, 'attendance', date);
-    await setDoc(dayRef, { lastUpdated: new Date().toISOString() }, { merge: true });
+    if (tenancy.legacyPathsEnabled()) {
+      const docRef = doc(db, 'attendance', date, 'records', String(studentId));
+      await setDoc(docRef, record);
+      const dayRef = doc(db, 'attendance', date);
+      await setDoc(dayRef, { lastUpdated: new Date().toISOString() }, { merge: true });
+    }
+    // Tenant-scoped dual-write (best-effort — mobile auth lacks tenantId claim yet)
+    try {
+      const tenantRecord = { ...record, tenantId: tenancy.getTenantId() };
+      await setDoc(doc(db, tenancy.attendanceRecordPath(date, String(studentId))), tenantRecord);
+      await setDoc(
+        doc(db, tenancy.attendanceDayDoc(date)),
+        { lastUpdated: new Date().toISOString(), tenantId: tenancy.getTenantId() },
+        { merge: true },
+      );
+    } catch (te) {
+      console.warn('Tenant attendance dual-write failed (non-fatal):', te?.message || te);
+    }
 
     // ── Cache the check-in so we skip Firestore on subsequent scans ──
     const checkinKey = `checkin_${date}_${studentId}`;

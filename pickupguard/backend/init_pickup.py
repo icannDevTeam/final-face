@@ -1,0 +1,1 @@
+/home/pandora/Downloads/final-face/backend/init_pickup.py

@@ -135,13 +135,16 @@ export default async function handler(req, res) {
 
   const { IdStudent, IdBinusian } = req.body || {};
 
-  if (!IdStudent) {
-    return res.status(400).json({ error: 'IdStudent is required' });
+  if (!IdStudent && !IdBinusian) {
+    return res.status(400).json({ error: 'IdStudent or IdBinusian is required' });
   }
 
-  // Validate IdStudent format — numeric only, 7-12 digits
-  if (!/^\d{7,12}$/.test(String(IdStudent))) {
+  // Validate format — IdStudent: numeric 7-12 digits; IdBinusian: "BN" + digits or numeric
+  if (IdStudent && !/^\d{7,12}$/.test(String(IdStudent))) {
     return res.status(400).json({ error: 'Invalid IdStudent format' });
+  }
+  if (IdBinusian && !/^(BN)?\d{6,15}$/i.test(String(IdBinusian))) {
+    return res.status(400).json({ error: 'Invalid IdBinusian format' });
   }
 
   const apiKey = process.env.BINUS_API_KEY;

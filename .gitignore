@@ -50,3 +50,8 @@ node_modules/
 DOCS.md
 .DS_Store
 mobile-attendance/src/components/settings.json
+
+# Local virtual envs and editor configs
+.venv/
+.vscode/
+backend/devices.local.json.bak.*

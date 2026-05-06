@@ -1,0 +1,1 @@
+/home/pandora/Downloads/final-face/backend/seed_pickup_demo.py

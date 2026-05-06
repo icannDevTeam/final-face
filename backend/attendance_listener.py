@@ -45,6 +45,10 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+# Multi-tenancy helpers (Phase A1) — dual-write to tenant-scoped paths
+import tenancy
+import pickup_event_writer
+
 load_dotenv()
 
 # ─── Configuration ───────────────────────────────────────────────────────────
@@ -53,6 +57,9 @@ HIKVISION_IP   = os.getenv("HIKVISION_IP", "10.26.30.200")
 HIKVISION_USER = os.getenv("HIKVISION_USER", "admin")
 HIKVISION_PASS = os.getenv("HIKVISION_PASS")
 HIKVISION_DEVICE_NAME = os.getenv("HIKVISION_DEVICE_NAME", HIKVISION_IP)
+# Stable terminalId derived from the device name (matches
+# web-dataset-collector/pages/api/pickup/admin/terminals.js stableTerminalId).
+HIKVISION_TERMINAL_ID = hashlib.sha1(HIKVISION_DEVICE_NAME.encode("utf-8")).hexdigest()[:12]
 if not HIKVISION_PASS:
     raise SystemExit("FATAL: HIKVISION_PASS environment variable is required")
 
@@ -156,6 +163,15 @@ def get_firestore():
 
         _firestore_client = firestore.client()
         print("  ✓ Firebase Firestore connected")
+        # Phase 2: upsert devices.json into the Firestore terminals registry
+        # so the Next.js admin sees this terminal immediately.
+        try:
+            from sync_terminal_registry import sync_terminal_registry
+            n = sync_terminal_registry()
+            if n:
+                print(f"  ✓ Terminal registry synced ({n} entries)")
+        except Exception as _sync_e:
+            print(f"  ⚠ Terminal registry sync skipped: {_sync_e}")
         return _firestore_client
     except Exception as e:
         print(f"  ⚠ Firebase unavailable: {e}")
@@ -237,8 +253,8 @@ def upload_to_binus_api(name: str, emp_no: str, class_name: str, timestamp: str,
                 id_binusian = meta.get("idBinusian", "")
                 print(f"  📎 Metadata found (by name): IdStudent={id_student}, IdBinusian={id_binusian}")
 
-    if not id_student:
-        print(f"  ⚠ Binus API: No IdStudent found for {name} (emp#{emp_no}). Skipping API upload.")
+    if not id_student and not id_binusian:
+        print(f"  ⚠ Binus API: No IdStudent or IdBinusian found for {name} (emp#{emp_no}). Skipping API upload.")
         print(f"    → Re-enroll this student to populate metadata, or add manually to data/student_metadata.json")
         return False
 
@@ -249,7 +265,9 @@ def upload_to_binus_api(name: str, emp_no: str, class_name: str, timestamp: str,
             "ImageDesc": "-",
             "UserAction": os.getenv("USER_ACTION", "TEACHER7"),
         }
-        print(f"  ☁️  Binus API: Sending attendance for {name} (ID:{id_student})...")
+        primary_id = id_student or id_binusian
+        id_label = "ID" if id_student else "BinusianID"
+        print(f"  ☁️  Binus API: Sending attendance for {name} ({id_label}:{primary_id})...")
         success = api_integrate.insert_student_attendance(payload)
         if success:
             print(f"  ☁️  Binus API: ✓ Attendance recorded for {name}")
@@ -371,7 +389,7 @@ def get_last_recorded_time(date_str: str) -> str | None:
     return None
 
 
-def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: bool):
+def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: bool, push_binus: bool = True, full_day: bool = False):
     """Pull missed face-verification events from the device since last recorded
     attendance and backfill them into local JSON + Firestore + BINUS API.
 
@@ -383,9 +401,14 @@ def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: b
         return 0
 
     now = datetime.now(WIB)
+    today_str = now.strftime("%Y-%m-%d")
+    is_today = (today == today_str)
 
-    # Determine start time: last recorded event, or start of today
-    last_ts = get_last_recorded_time(today)
+    # Determine start time: last recorded event, or start of `today` (the
+    # date being recovered).  When `full_day=True` (multi-device catch-up of
+    # a past date) we ignore the cursor — otherwise the second device run
+    # would resume from the first device's last record and miss its morning.
+    last_ts = None if full_day else get_last_recorded_time(today)
     if last_ts:
         # Start 1 second after last recorded event to avoid re-processing it
         try:
@@ -399,7 +422,13 @@ def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: b
         start_time = f"{today}T00:00:00+07:00"
         print(f"  📡 Catch-up sync: searching events for full day {today}")
 
-    end_time = now.strftime("%Y-%m-%dT%H:%M:%S+07:00")
+    # End-time: end-of-day for past dates, "now" for today.  Without this
+    # clamp a single-date catch-up would silently span into the present and
+    # drag in unrelated events from later dates.
+    if is_today:
+        end_time = now.strftime("%Y-%m-%dT%H:%M:%S+07:00")
+    else:
+        end_time = f"{today}T23:59:59+07:00"
 
     # Paginate through all missed events
     pos = 0
@@ -466,6 +495,14 @@ def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: b
                 # Resolve HEX card → real student ID for dedup
                 real_emp_no = resolve_employee_no(emp_no)
 
+                # PickupGuard: chaperones (9XXX) are not retroactively recorded
+                # via catch-up — pickup events without a live capture image are
+                # not useful for the TV display, and they must never enter the
+                # attendance pipeline.
+                if tenancy.is_chaperone_employee_no(real_emp_no) or \
+                   tenancy.is_chaperone_employee_no(emp_no):
+                    continue
+
                 # Only first occurrence per student (dedup within catch-up)
                 if real_emp_no in seen_emp:
                     continue
@@ -503,11 +540,13 @@ def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: b
                 fb_result = None
                 if use_firebase:
                     fb_result = save_firebase(name, real_emp_no, timestamp, status, event_date, scanned_emp_no=emp_no)
-                # Push to BINUS unless already confirmed pushed
-                if fb_result != "already_exists":
+                # Push to BINUS unless already confirmed pushed (and only when caller allowed it)
+                if push_binus and fb_result != "already_exists":
                     binus_ok = upload_to_binus_api(name, real_emp_no, "", timestamp, status, is_late)
                     if binus_ok:
                         mark_binus_pushed(real_emp_no, event_date)
+                elif not push_binus:
+                    print(f"  ⏭️  BINUS push skipped (--no-binus) for {name}")
                 synced += 1
 
             pos += len(events)
@@ -670,7 +709,7 @@ def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str:
             print(f"  ℹ️  {name} already clocked in via {existing_source} — skipping overwrite")
             return "already_exists"
 
-        doc_ref.set({
+        record_payload = {
             "name": name,
             "employeeNo": emp_no,
             "scannedEmployeeNo": scanned_emp_no or emp_no,
@@ -684,10 +723,22 @@ def save_firebase(name: str, emp_no: str, timestamp: str, status: str, date_str:
             "deviceIp": HIKVISION_IP,
             "binusPushed": False,
             "updatedAt": datetime.now(WIB).isoformat(),
-        })
-        # Also update the day summary
-        day_ref = db.collection("attendance").document(date_str)
-        day_ref.set({"lastUpdated": datetime.now(WIB).isoformat()}, merge=True)
+        }
+        if tenancy.legacy_paths_enabled():
+            doc_ref.set(record_payload)
+            db.collection("attendance").document(date_str).set(
+                {"lastUpdated": datetime.now(WIB).isoformat()}, merge=True
+            )
+        # Tenant-scoped dual-write (Phase A6 — always on)
+        try:
+            tenant_record_ref = db.document(tenancy.attendance_record_path(date_str, emp_no))
+            tenant_record_ref.set({**record_payload, "tenantId": tenancy.get_tenant_id()})
+            db.document(tenancy.attendance_day_doc(date_str)).set(
+                {"lastUpdated": datetime.now(WIB).isoformat(), "tenantId": tenancy.get_tenant_id()},
+                merge=True,
+            )
+        except Exception as te:
+            print(f"  ⚠ Tenant dual-write failed (non-fatal): {te}")
         return "created"
     except Exception as e:
         print(f"  ⚠ Firestore write failed: {e}")
@@ -700,8 +751,16 @@ def mark_binus_pushed(emp_no: str, date_str: str):
     if not db:
         return
     try:
-        doc_ref = db.collection("attendance").document(date_str).collection("records").document(emp_no)
-        doc_ref.update({"binusPushed": True, "binusPushedAt": datetime.now(WIB).isoformat()})
+        push_payload = {"binusPushed": True, "binusPushedAt": datetime.now(WIB).isoformat()}
+        if tenancy.legacy_paths_enabled():
+            db.collection("attendance").document(date_str).collection("records").document(emp_no).update(push_payload)
+        # Tenant-scoped dual-write
+        try:
+            db.document(tenancy.attendance_record_path(date_str, emp_no)).update(push_payload)
+        except Exception as te:
+            # Tenant doc may not exist yet if backfill hasn't run — ignore quietly
+            if "NOT_FOUND" not in str(te) and "No document to update" not in str(te):
+                print(f"  ⚠ Tenant binusPushed update failed (non-fatal): {te}")
     except Exception as e:
         print(f"  ⚠ Failed to mark binusPushed for {emp_no}: {e}")
 
@@ -711,10 +770,19 @@ def mark_binus_pushed(emp_no: str, date_str: str):
 def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
     """
     Parse multipart MIME event stream from the device.
-    Yields (name, emp_no, timestamp_str, status, date_str) for each new attendance.
+    Yields tuples for each new attendance.
+
+    Yield shape:
+        (name, real_emp_no, scanned_emp_no, timestamp, status, date_str,
+         jpeg_bytes_or_none)
+
+    The JPEG, when present, is the face-capture image the device sends
+    in the part *immediately following* the JSON event. PickupGuard
+    (chaperone branch) needs it; normal attendance ignores it.
     """
     buffer = b""
     boundary = b"--MIME_boundary"
+    pending_event = None  # JSON event waiting to pair with its JPEG
 
     for chunk in resp.iter_content(chunk_size=4096):
         if not chunk:
@@ -731,14 +799,37 @@ def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
             if len(part) < 20:
                 continue
 
-            # We only care about JSON parts (not image parts)
+            # Detect content-type early (work on raw bytes — JPEG isn't UTF-8)
+            ct_match = re.search(rb"Content-Type:\s*([\w/+\-.]+)", part, re.IGNORECASE)
+            content_type = (ct_match.group(1).decode("ascii", "ignore").lower()
+                            if ct_match else "")
+
+            if content_type.startswith("image/"):
+                # Strip MIME headers (terminated by blank line) to leave raw image bytes
+                hdr_end = part.find(b"\r\n\r\n")
+                if hdr_end == -1:
+                    hdr_end = part.find(b"\n\n")
+                    sep_len = 2
+                else:
+                    sep_len = 4
+                jpeg_bytes = part[hdr_end + sep_len:].rstrip(b"\r\n-") if hdr_end > 0 else b""
+                if pending_event is not None and jpeg_bytes:
+                    pending_event["_jpeg"] = jpeg_bytes
+                continue
+
+            if "json" not in content_type:
+                continue
+
             try:
                 text = part.decode("utf-8", errors="ignore")
             except Exception:
                 continue
 
-            if "application/json" not in text:
-                continue
+            # If we had a pending event without a JPEG, flush it now
+            if pending_event is not None:
+                yield from _emit_event(pending_event, name_map, logged_today, today)
+                today = pending_event.get("_today", today)
+                pending_event = None
 
             # Extract JSON object from the text
             json_start = text.find("{")
@@ -759,51 +850,69 @@ def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
             major = ace.get("majorEventType", 0)
             sub = ace.get("subEventType", 0)
 
-            # majorEventType=5: access control events
-            # subEventType=75: face comparison success
-            # subEventType=76: face verification success  
-            # subEventType=104: face recognition (alternate)
             if major != 5 or sub not in (75, 76, 104):
                 continue
 
-            emp_no = ace.get("employeeNoString", "") or str(ace.get("employeeNo", ""))
-            name = ace.get("name", "") or name_map.get(emp_no, "")
+            pending_event = {"ace": ace, "_today": today, "_jpeg": None}
 
-            if not emp_no or not name:
-                continue
+        # End of available parts in buffer; if pending event is older than
+        # ~1.5s we can flush it without its image (device may have skipped
+        # the JPEG for this scan).
+        if pending_event is not None:
+            t0 = pending_event.get("_seen_at", time.time())
+            if "_seen_at" not in pending_event:
+                pending_event["_seen_at"] = time.time()
+            elif time.time() - t0 > 1.5:
+                yield from _emit_event(pending_event, name_map, logged_today, today)
+                today = pending_event.get("_today", today)
+                pending_event = None
 
-            # Check date rollover
-            now = datetime.now(WIB)
-            current_date = now.strftime("%Y-%m-%d")
-            if current_date != today:
-                today = current_date
-                logged_today.clear()
-                print(f"\n📅 New day: {today}")
-                logged_today.update(load_logged_today(today))
 
-            # Resolve HEX card → real student ID for dedup
-            real_emp_no = resolve_employee_no(emp_no)
+def _emit_event(pending: dict, name_map: dict, logged_today: dict, today: str):
+    """Convert a buffered ACE event (+ optional JPEG) into a yieldable tuple."""
+    ace = pending["ace"]
+    emp_no = ace.get("employeeNoString", "") or str(ace.get("employeeNo", ""))
+    name = ace.get("name", "") or name_map.get(emp_no, "")
 
-            # Skip if already logged within window (check both HEX and real)
-            already_logged = False
-            for check_no in (emp_no, real_emp_no):
-                if check_no in logged_today:
-                    elapsed = now.timestamp() - logged_today[check_no]
-                    if elapsed < DUPLICATE_WINDOW:
-                        hrs = (DUPLICATE_WINDOW - elapsed) / 3600
-                        print(f"  ℹ️  {name} — Already Logged ✓ (next allowed in {hrs:.1f}h)")
-                        already_logged = True
-                        break
-            if already_logged:
-                continue
+    if not emp_no or not name:
+        return
 
-            logged_today[emp_no] = now.timestamp()
-            logged_today[real_emp_no] = now.timestamp()
-            timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
-            status = determine_status(now)
+    now = datetime.now(WIB)
+    current_date = now.strftime("%Y-%m-%d")
+    if current_date != today:
+        today = current_date
+        logged_today.clear()
+        print(f"\n📅 New day: {today}")
+        logged_today.update(load_logged_today(today))
 
-            yield name, real_emp_no, emp_no, timestamp, status, current_date
-            today = current_date  # update for next iteration
+    real_emp_no = resolve_employee_no(emp_no)
+
+    # PickupGuard: chaperone events bypass attendance dedup entirely so a
+    # parent doing two pickups in a day still produces two cards.
+    is_chaperone = tenancy.is_chaperone_employee_no(real_emp_no) or \
+                   tenancy.is_chaperone_employee_no(emp_no)
+
+    if not is_chaperone:
+        already_logged = False
+        for check_no in (emp_no, real_emp_no):
+            if check_no in logged_today:
+                elapsed = now.timestamp() - logged_today[check_no]
+                if elapsed < DUPLICATE_WINDOW:
+                    hrs = (DUPLICATE_WINDOW - elapsed) / 3600
+                    print(f"  ℹ️  {name} — Already Logged ✓ (next allowed in {hrs:.1f}h)")
+                    already_logged = True
+                    break
+        if already_logged:
+            return
+        logged_today[emp_no] = now.timestamp()
+        logged_today[real_emp_no] = now.timestamp()
+
+    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    status = determine_status(now)
+    pending["_today"] = current_date
+
+    yield (name, real_emp_no, emp_no, timestamp, status, current_date,
+           pending.get("_jpeg"))
 
 
 # ─── Main listener ───────────────────────────────────────────────────────────
@@ -905,11 +1014,35 @@ def run_listener(use_firebase=True):
             print(f"   ✓ Connected! Listening for face recognition events...\n")
             retry_delay = 5  # reset on success
 
-            for name, emp_no, scanned_emp_no, timestamp, status, date_str in parse_event_stream(
+            for name, emp_no, scanned_emp_no, timestamp, status, date_str, jpeg_bytes in parse_event_stream(
                 resp, name_map, logged_today, today
             ):
                 today = date_str
                 count += 1
+
+                # ── PickupGuard branch ────────────────────────────────
+                # Chaperones (employeeNo prefix '9') never touch attendance.
+                if tenancy.is_chaperone_employee_no(emp_no) or \
+                   tenancy.is_chaperone_employee_no(scanned_emp_no):
+                    if use_firebase:
+                        try:
+                            pickup_event_writer.record_pickup_event(
+                                tenant_id=tenancy.get_tenant_id(),
+                                employee_no=emp_no,
+                                chaperone_name_hint=name,
+                                scanned_at=datetime.now(WIB),
+                                device_name=HIKVISION_DEVICE_NAME,
+                                gate=HIKVISION_DEVICE_NAME,
+                                terminal_id=HIKVISION_TERMINAL_ID,
+                                jpeg_bytes=jpeg_bytes,
+                            )
+                        except Exception as e:
+                            print(f"  ⚠ Pickup event handler failed: {e}")
+                    else:
+                        print(f"🟦 PICKUP (firebase disabled) [{timestamp}] {name}")
+                    continue
+
+                # ── Normal attendance flow ───────────────────────────
                 is_late = status == "Late"
                 icon = "⏰" if is_late else "✅"
                 print(f"{icon} [{timestamp}] {name} — {status}")
@@ -937,7 +1070,7 @@ def run_listener(use_firebase=True):
             retry_delay = min(retry_delay * 2, 60)
 
 
-def run_catchup(dates: list[str], use_firebase: bool = True):
+def run_catchup(dates: list[str], use_firebase: bool = True, push_binus: bool = True, full_day: bool = False):
     """One-shot catch-up sync for specified dates, then exit."""
     print("=" * 60)
     print("  Hikvision Catch-up Sync")
@@ -945,6 +1078,7 @@ def run_catchup(dates: list[str], use_firebase: bool = True):
     print(f"  Device:    {HIKVISION_IP}")
     print(f"  Dates:     {', '.join(dates)}")
     print(f"  Firebase:  {'enabled' if use_firebase else 'disabled'}")
+    print(f"  BINUS API: {'enabled' if push_binus else 'disabled (--no-binus)'}")
     print()
 
     name_map = build_name_map()
@@ -964,7 +1098,7 @@ def run_catchup(dates: list[str], use_firebase: bool = True):
     for date_str in dates:
         print(f"── {date_str} ──")
         logged = load_logged_today(date_str)
-        caught = catchup_sync(name_map, logged, date_str, use_firebase)
+        caught = catchup_sync(name_map, logged, date_str, use_firebase, push_binus=push_binus, full_day=full_day)
         total += caught
         print()
 
@@ -975,7 +1109,9 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Hikvision attendance event listener")
     parser.add_argument("--no-firebase", action="store_true", help="Disable Firebase sync")
+    parser.add_argument("--no-binus", action="store_true", help="Disable BINUS API push (catch-up only)")
     parser.add_argument("--catchup", action="store_true", help="One-shot catch-up sync (pull missed events), then exit")
+    parser.add_argument("--full-day", action="store_true", help="Catch-up: scan from 00:00 of each date, ignoring any cursor (use when running multiple devices against the same date)")
     parser.add_argument("--date", type=str, help="Specific date to catch up (YYYY-MM-DD). Can be repeated.", action="append")
     parser.add_argument("--days", type=int, help="Catch up the last N days (default: 1 = today only)")
     args = parser.parse_args()
@@ -988,6 +1124,6 @@ if __name__ == "__main__":
             dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(args.days)]
         else:
             dates = [datetime.now(WIB).strftime("%Y-%m-%d")]
-        run_catchup(dates, use_firebase=not args.no_firebase)
+        run_catchup(dates, use_firebase=not args.no_firebase, push_binus=not args.no_binus, full_day=args.full_day)
     else:
         run_listener(use_firebase=not args.no_firebase)

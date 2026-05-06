@@ -47,6 +47,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Multi-tenancy helpers (Phase A1)
+import tenancy
+
 # Student metadata mapping (employeeNo → BINUS IDs)
 import student_metadata
 
@@ -606,8 +609,14 @@ def capture_face_from_device(output_path: str, timeout: int = 60) -> bool:
 
 
 def _upload_face_to_firebase(local_path: str, student_name: str, homeroom: str):
-    """Upload a captured face image to Firebase Storage as backup."""
+    """Upload a captured face image to Firebase Storage as backup.
+
+    Dual-writes to BOTH the legacy `face_dataset/{homeroom}/{name}/...` path
+    and the tenant-scoped `tenants/{tid}/face_dataset/{homeroom}/{name}/...`
+    path during the migration window.
+    """
     try:
+        import tenancy
         from firebase_dataset_sync import initialize_firebase_app
         import firebase_admin
         from firebase_admin import storage as fb_storage
@@ -615,10 +624,20 @@ def _upload_face_to_firebase(local_path: str, student_name: str, homeroom: str):
         app = initialize_firebase_app(FIREBASE_CREDENTIALS, FIREBASE_BUCKET)
         bucket = fb_storage.bucket(app=app)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        blob_path = f"face_dataset/{homeroom}/{student_name}/{ts}_device_capture.jpg"
-        blob = bucket.blob(blob_path)
-        blob.upload_from_filename(local_path, content_type="image/jpeg")
-        print(f"   ☁️  Backed up to Firebase: {blob_path}")
+        filename = f"{ts}_device_capture.jpg"
+
+        if tenancy.legacy_paths_enabled():
+            blob_path = f"{tenancy.LEGACY_STORAGE_PREFIX}/{homeroom}/{student_name}/{filename}"
+            bucket.blob(blob_path).upload_from_filename(local_path, content_type="image/jpeg")
+            print(f"   ☁️  Backed up to Firebase: {blob_path}")
+
+        # Tenant-scoped dual-write
+        try:
+            tenant_path = f"{tenancy.storage_student_folder(homeroom, student_name)}/{filename}"
+            bucket.blob(tenant_path).upload_from_filename(local_path, content_type="image/jpeg")
+            print(f"   ☁️  Tenant copy: {tenant_path}")
+        except Exception as te:
+            print(f"   ⚠️  Tenant storage dual-write failed (non-fatal): {te}")
     except Exception as e:
         print(f"   ⚠️  Firebase backup failed (non-fatal): {e}")
 
@@ -1203,12 +1222,23 @@ def _upload_attendance_record(db, name: str, employee_no: str,
                     record["grade"] = meta.get("grade", "")
 
             # Write to subcollection: attendance/{date}/records/{employeeNo}
-            doc_ref = db.collection("attendance").document(today).collection("records").document(employee_no)
-            doc_ref.set(record, merge=True)
-            # Update day-level summary timestamp
-            db.collection("attendance").document(today).set(
-                {"lastUpdated": datetime.now().isoformat()}, merge=True
-            )
+            if tenancy.legacy_paths_enabled():
+                doc_ref = db.collection("attendance").document(today).collection("records").document(employee_no)
+                doc_ref.set(record, merge=True)
+                # Update day-level summary timestamp
+                db.collection("attendance").document(today).set(
+                    {"lastUpdated": datetime.now().isoformat()}, merge=True
+                )
+            # Tenant-scoped dual-write
+            try:
+                tenant_record = {**record, "tenantId": tenancy.get_tenant_id()}
+                db.document(tenancy.attendance_record_path(today, employee_no)).set(tenant_record, merge=True)
+                db.document(tenancy.attendance_day_doc(today)).set(
+                    {"lastUpdated": datetime.now().isoformat(), "tenantId": tenancy.get_tenant_id()},
+                    merge=True,
+                )
+            except Exception as te:
+                print(f"   ⚠️  Tenant attendance dual-write failed (non-fatal): {te}")
             print(f"   ☁️  Synced to Firebase: {name} → {status}")
         except Exception as e:
             print(f"   ⚠️  Firebase sync error: {e}")
@@ -1229,8 +1259,8 @@ def _upload_attendance_record(db, name: str, employee_no: str,
                 id_student = meta.get("idStudent", "")
                 id_binusian = meta.get("idBinusian", "")
 
-            if not id_student:
-                print(f"   ⚠️  BINUS API skipped for {name}: no IdStudent in metadata")
+            if not id_student and not id_binusian:
+                print(f"   ⚠️  BINUS API skipped for {name}: no IdStudent or IdBinusian in metadata")
                 return
 
             if not BINUS_API_KEY:
