@@ -178,6 +178,52 @@ def get_firestore():
         return None
 
 
+# ─── Pickup gate enforcer (Firestore schedule + admin override → relay) ──────
+
+_gate_enforcer = None
+
+def _start_gate_enforcer():
+    """Spawn a daemon thread that pushes door state to this Hikvision terminal
+    based on the schedule + manual override stored in Firestore.
+    """
+    global _gate_enforcer
+    if _gate_enforcer is not None:
+        return
+    db = get_firestore()
+    if db is None:
+        return
+    import gate_controller
+    tid = tenancy.get_tenant_id()
+    term_path = f"{tenancy.terminals_path(tid)}/{HIKVISION_TERMINAL_ID}"
+
+    def _read_doc():
+        try:
+            snap = db.document(term_path).get()
+            return snap.to_dict() if snap.exists else None
+        except Exception as e:
+            print(f"  ⚠ Gate enforcer firestore read failed: {e}")
+            return None
+
+    def _send(cmd):
+        # Refresh challenge on 401 so subsequent calls succeed.
+        ok = gate_controller.hik_remote_control_door(
+            HIKVISION_IP,
+            lambda method, uri: build_digest_auth(method, uri, get_digest_challenge()),
+            cmd,
+        )
+        if not ok:
+            invalidate_challenge()
+        return ok
+
+    _gate_enforcer = gate_controller.GateEnforcer(
+        terminal_id=HIKVISION_TERMINAL_ID,
+        hik_ip=HIKVISION_IP,
+        send_cmd=_send,
+        get_terminal_doc=_read_doc,
+    )
+    _gate_enforcer.start()
+
+
 # ─── Binus School API (optional) ─────────────────────────────────────────────
 
 try:
@@ -956,6 +1002,14 @@ def run_listener(use_firebase=True):
 
     if use_firebase:
         get_firestore()
+    print()
+
+    # ── Start per-terminal gate enforcer (Firestore → Hikvision relay) ────
+    if use_firebase:
+        try:
+            _start_gate_enforcer()
+        except Exception as _ge:
+            print(f"⚠ Gate enforcer not started: {_ge}")
     print()
 
     today = datetime.now(WIB).strftime("%Y-%m-%d")
