@@ -22,6 +22,9 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -39,6 +42,16 @@ WIB = timezone(timedelta(hours=7))
 PICKUP_EVENT_SOCKET = os.environ.get(
     "PICKUP_EVENT_SOCKET", "/tmp/pickupguard.sock"
 )
+
+# HTTP fan-out to the Next.js SSE bus (Phase 1 of latency optimization).
+# When set, every successful pickup_event write is also POSTed to
+# {INTERNAL_NOTIFY_URL} so connected iPad teacher PWAs get the new card via
+# Server-Sent Events in <1s instead of waiting for the next 2.5s poll.
+# Both env vars must be set for the push to fire; missing config = silent skip
+# (the polling fallback on the iPad still hydrates new events).
+INTERNAL_NOTIFY_URL = os.environ.get("INTERNAL_NOTIFY_URL", "").strip()
+INTERNAL_PUSH_SECRET = os.environ.get("INTERNAL_PUSH_SECRET", "").strip()
+_NOTIFY_TIMEOUT_SEC = 1.5
 
 # Cached pickup_settings per tenant (small TTL — admin changes are rare).
 _settings_cache: dict[str, tuple[float, dict]] = {}
@@ -197,6 +210,41 @@ def _publish_socket(payload: dict, gate: Optional[str] = None) -> None:
         pass  # SSE server may not be running yet — this is OK
 
 
+def _publish_http_notify(tenant_id: str, event_id: str) -> None:
+    """Fire-and-forget POST to the Next.js SSE bus so iPads see the new card
+    in <1s instead of waiting for the polling fallback. Runs in a daemon
+    thread so the writer's hot path never blocks on network IO."""
+    if not INTERNAL_NOTIFY_URL or not INTERNAL_PUSH_SECRET:
+        return
+    if not tenant_id or not event_id:
+        return
+
+    def _do_post() -> None:
+        try:
+            body = json.dumps({
+                "tenantId": tenant_id,
+                "eventId": event_id,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                INTERNAL_NOTIFY_URL,
+                data=body,
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Internal-Push-Secret": INTERNAL_PUSH_SECRET,
+                },
+            )
+            with urllib.request.urlopen(req, timeout=_NOTIFY_TIMEOUT_SEC) as resp:
+                resp.read()  # drain
+        except urllib.error.HTTPError as e:
+            print(f"  ⚠ SSE notify HTTP {e.code} for {event_id}")
+        except Exception as e:
+            # Non-fatal — polling fallback covers this.
+            print(f"  ⚠ SSE notify failed for {event_id}: {e}")
+
+    threading.Thread(target=_do_post, daemon=True).start()
+
+
 def record_pickup_event(
     *,
     tenant_id: str,
@@ -207,6 +255,15 @@ def record_pickup_event(
     gate: Optional[str] = None,
     terminal_id: Optional[str] = None,
     jpeg_bytes: Optional[bytes] = None,
+    # ── Facial-recognition signals (all optional; the listener fills these
+    # in when it has them — older Hikvision-only callers leave them null).
+    fr_confidence: Optional[float] = None,    # 0.0 – 1.0 match similarity
+    fr_distance: Optional[float] = None,      # raw embedding distance
+    liveness_score: Optional[float] = None,   # 0.0 – 1.0 (1.0 = clearly live)
+    liveness_passed: Optional[bool] = None,   # threshold result from engine
+    spoof_flag: Optional[bool] = None,        # True ⇒ spoof attempt detected
+    fr_retries: Optional[int] = None,         # # of attempts before lock-on
+    fr_engine: Optional[str] = None,          # 'hikvision' | 'edge_dlib' | 'cloud'
 ) -> Optional[dict]:
     """
     Persist a pickup event. Returns the written doc dict (with id) or None
@@ -306,6 +363,17 @@ def record_pickup_event(
         "officerOverride": None,    # set later if officer page approves
         "overrideCode": override_code,
         "holdSeconds": int(settings.get("holdSeconds") or 60),
+        # ── FR signals (None when not provided) ──────────────────────
+        "fr": {
+            "confidence": float(fr_confidence) if fr_confidence is not None else None,
+            "distance":   float(fr_distance)   if fr_distance   is not None else None,
+            "liveness":   float(liveness_score) if liveness_score is not None else None,
+            "livenessPassed": bool(liveness_passed) if liveness_passed is not None else None,
+            "spoof":      bool(spoof_flag) if spoof_flag is not None else None,
+            "retries":    int(fr_retries) if fr_retries is not None else None,
+            "engine":     fr_engine or "hikvision",
+            "enrolledPhotoPath": (chap_summary.get("photoUrl") if isinstance(chap_summary, dict) else None),
+        },
     }
 
     try:
@@ -337,6 +405,7 @@ def record_pickup_event(
             pass
 
     _publish_socket(doc, gate=gate)
+    _publish_http_notify(tid, event_id)
 
     pretty = ", ".join(s["name"] for s in students) or "(no students)"
     color = {"green": "🟢", "yellow": "🟡", "red": "🔴"}.get(card_state, "⚪")
