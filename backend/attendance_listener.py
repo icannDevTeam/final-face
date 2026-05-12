@@ -159,7 +159,8 @@ def get_firestore():
         )
         if not firebase_admin._apps:
             cred = credentials.Certificate(cred_path)
-            firebase_admin.initialize_app(cred)
+            bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET", "facial-attendance-binus.firebasestorage.app")
+            firebase_admin.initialize_app(cred, {"storageBucket": bucket_name})
 
         _firestore_client = firestore.client()
         print("  ✓ Firebase Firestore connected")

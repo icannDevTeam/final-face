@@ -25,7 +25,7 @@
     "ip": "10.26.30.201",
     "password_env": "HIKVISION_PASS_MYP_TOWER",
     "dns": "10.26.200.200",
-    "enabled": false,
+    "enabled": true,
     "gradeScopes": ["6", "7", "8"],
     "section": "MYP",
     "note": "Serial: E4034991. Static IP set 2026-04-02. Disabled 2026-05-06: device unreachable on network. Middle years (grades 6–8)."

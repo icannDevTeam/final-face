@@ -108,6 +108,163 @@ def _get_pickup_settings(tid: str) -> dict:
     return data or {}
 
 
+# ─── Cooldown + window helpers ────────────────────────────────────────────────
+# Same chaperone re-tapping the same terminal within `cooldownSeconds` is
+# treated as a duplicate and silently skipped (no Firestore write, no iPad
+# card). Unknown / suspended chaperones bypass the cooldown so security
+# events always reach staff.
+_recent_scan_cache: dict[str, float] = {}  # key=tid|empNo|terminalId → epoch sec
+_recent_terminal_scan: dict[str, float] = {}  # key=tid|terminalId → epoch sec (any parent)
+_RECENT_LOCAL_TTL = 600.0                  # cache up to 10 min in-process
+
+
+def _hhmm_to_minutes(s: Optional[str]) -> Optional[int]:
+    if not s or not isinstance(s, str) or ":" not in s:
+        return None
+    try:
+        h, m = s.split(":", 1)
+        return int(h) * 60 + int(m)
+    except Exception:
+        return None
+
+
+def _resolve_window(db, tid: str, terminal_id: Optional[str]) -> Optional[dict]:
+    """Per-terminal window first, tenant-default second, else None.
+
+    Returns {"open": HH:MM, "close": HH:MM} or None for always-open.
+    """
+    if terminal_id:
+        try:
+            tsnap = db.document(f"{tenancy.terminals_path(tid)}/{terminal_id}").get()
+            if tsnap.exists:
+                td = tsnap.to_dict() or {}
+                w_open = td.get("windowOpen")
+                w_close = td.get("windowClose")
+                if w_open and w_close:
+                    return {"open": w_open, "close": w_close}
+        except Exception:
+            pass
+    settings = _get_pickup_settings(tid)
+    pw = settings.get("pickupWindow") or {}
+    if pw.get("start") and pw.get("end"):
+        return {"open": pw["start"], "close": pw["end"]}
+    return None
+
+
+def _in_window(now_dt: datetime, window: dict, warmup_min: int) -> bool:
+    """True if now_dt is within [open-warmup, close]. Handles overnight too."""
+    open_min = _hhmm_to_minutes(window.get("open"))
+    close_min = _hhmm_to_minutes(window.get("close"))
+    if open_min is None or close_min is None:
+        return True
+    cur = now_dt.hour * 60 + now_dt.minute
+    start = max(0, open_min - max(0, int(warmup_min)))
+    if close_min >= start:
+        return start <= cur <= close_min
+    # Overnight (e.g. 22:00 → 02:00): wraps midnight
+    return cur >= start or cur <= close_min
+
+
+def _cooldown_active(db, tid: str, employee_no: str, terminal_id: Optional[str],
+                     cooldown_sec: int, now_dt: datetime) -> bool:
+    """Check in-process cache first, then Firestore for cross-process safety."""
+    if cooldown_sec <= 0 or not terminal_id:
+        return False
+    import time as _time
+    key = f"{tid}|{employee_no}|{terminal_id}"
+    last = _recent_scan_cache.get(key)
+    now_epoch = _time.time()
+    # Drop very old cache entries
+    if last and now_epoch - last > _RECENT_LOCAL_TTL:
+        _recent_scan_cache.pop(key, None)
+        last = None
+    if last and (now_epoch - last) < cooldown_sec:
+        return True
+    # Cross-process: query Firestore for the latest event from this chap@terminal
+    try:
+        q = (db.collection(tenancy.pickup_events_path(tid))
+               .where("employeeNo", "==", employee_no)
+               .where("terminalId", "==", terminal_id)
+               .order_by("recordedAt", direction="DESCENDING")
+               .limit(1).stream())
+        for s in q:
+            d = s.to_dict() or {}
+            ra = d.get("recordedAt")
+            ts = None
+            if hasattr(ra, "timestamp"):
+                ts = ra.timestamp()
+            elif isinstance(ra, str):
+                try:
+                    ts = datetime.fromisoformat(ra).timestamp()
+                except Exception:
+                    ts = None
+            if ts and (now_dt.timestamp() - ts) < cooldown_sec:
+                _recent_scan_cache[key] = ts
+                return True
+    except Exception:
+        # Missing composite index, etc — fail open (don't block legitimate scans)
+        return False
+    return False
+
+
+def _mark_recent(tid: str, employee_no: str, terminal_id: Optional[str], now_dt: datetime) -> None:
+    if not terminal_id:
+        return
+    ts = now_dt.timestamp()
+    _recent_scan_cache[f"{tid}|{employee_no}|{terminal_id}"] = ts
+    _recent_terminal_scan[f"{tid}|{terminal_id}"] = ts
+
+
+def _inter_parent_throttle_active(tid: str, terminal_id: Optional[str],
+                                  min_gap_sec: float, now_dt: datetime) -> bool:
+    """True if ANY parent scanned this terminal within `min_gap_sec`.
+
+    Prevents two parents tapping back-to-back from colliding on the iPad.
+    Same-parent re-taps are caught by the longer per-chaperone cooldown.
+    """
+    if not terminal_id or min_gap_sec <= 0:
+        return False
+    key = f"{tid}|{terminal_id}"
+    last = _recent_terminal_scan.get(key)
+    if not last:
+        return False
+    gap = now_dt.timestamp() - last
+    if gap < 0 or gap > _RECENT_LOCAL_TTL:
+        _recent_terminal_scan.pop(key, None)
+        return False
+    return gap < min_gap_sec
+
+
+def _terminal_grade_scopes(db, tid: str, terminal_id: Optional[str]) -> list[str]:
+    """Return gradeScopes array for a terminal. [] means 'all grades'."""
+    if not terminal_id:
+        return []
+    try:
+        snap = db.document(f"{tenancy.terminals_path(tid)}/{terminal_id}").get()
+        if snap.exists:
+            d = snap.to_dict() or {}
+            scopes = d.get("gradeScopes")
+            if isinstance(scopes, list):
+                return [str(x).strip() for x in scopes if str(x).strip()]
+    except Exception:
+        pass
+    return []
+
+
+def _student_grade(student: dict) -> Optional[str]:
+    """Pull leading digits from homeroom (e.g. '5C' → '5', '4A' → '4')."""
+    hr = (student or {}).get("homeroom") or ""
+    if not hr:
+        return None
+    digits = ""
+    for ch in str(hr):
+        if ch.isdigit():
+            digits += ch
+        else:
+            break
+    return digits or None
+
+
 def _resolve_chaperone(db, tid: str, employee_no: str) -> Optional[dict]:
     """Find chaperones doc for a 9XXX employeeNo. Returns None if unknown."""
     chap_id = f"chap-{employee_no}"
@@ -312,11 +469,66 @@ def record_pickup_event(
 
     students = _resolve_students(db, tid, student_ids)
 
-    # Compute card color hint for TV display. Gate-window classification is
+    now_dt = _now()
+
+    # ── Wrong-terminal detection ─────────────────────────────────────────
+    # If the terminal is grade-scoped and this chaperone has students but
+    # NONE of them belong to that grade, treat as audit-only "wrong_terminal"
+    # so the bound iPad doesn't fire. (e.g. Grade 2 parent walking past the
+    # GRADE 5 gate.) Unknown chaperones bypass this check.
+    if decision == "ok" and students:
+        scopes = _terminal_grade_scopes(db, tid, terminal_id)
+        if scopes:
+            student_grades = {g for g in (_student_grade(s) for s in students) if g}
+            if student_grades and not (student_grades & set(scopes)):
+                decision = "wrong_terminal"
+
+    # ── Cooldown + window guards ─────────────────────────────────────────
+    # `silent` decisions are written for audit but suppressed from iPad feed.
+    silent_decisions = {"unknown_chaperone", "wrong_terminal"}
+    is_silent = decision in silent_decisions
+    is_suspended = decision == "suspended"
+    cooldown_sec = int(settings.get("cooldownSeconds") or 300)
+    warmup_min = int(settings.get("warmupMinutes") or 30)
+    enforce_window = bool(settings.get("enforceWindow", True))
+    inter_parent_sec = float(settings.get("interParentSeconds") or 2)
+    outside_window = False
+
+    # Inter-parent throttle — applies to ALL scans (including silent + suspended)
+    # to prevent terminal log spam and iPad collisions when two parents tap
+    # back-to-back. Tunable via tenants/{tid}/settings/pickup.interParentSeconds
+    # (default 2s; set 0 to disable).
+    if _inter_parent_throttle_active(tid, terminal_id, inter_parent_sec, now_dt):
+        print(f"  ⏸  Inter-parent throttle — {device_name} "
+              f"(another scan <{inter_parent_sec}s ago) — skipped")
+        return None
+
+    # Cooldown applies to silent + ok decisions to prevent log spam.
+    # Suspended bypasses cooldown so security flags always reach staff.
+    if not is_suspended:
+        if _cooldown_active(db, tid, employee_no, terminal_id, cooldown_sec, now_dt):
+            print(f"  ⏸  Pickup cooldown — {chap_summary['name']} @ {device_name} "
+                  f"(within {cooldown_sec}s) — skipped")
+            return None
+        # Window enforcement only for normal "ok" — silent decisions stay silent.
+        if decision == "ok" and enforce_window:
+            window = _resolve_window(db, tid, terminal_id)
+            if window and not _in_window(now_dt, window, warmup_min):
+                outside_window = True
+                decision = "outside_window"
+                card_state = "info"
+
+    # Mark this scan as recent so the next one within cooldown is skipped.
+    _mark_recent(tid, employee_no, terminal_id, now_dt)
+
     # now a pure display concern (handled per-profile in the TV feed) so we
     # do NOT colour by time-of-day here — a single source of truth lives in
     # web-dataset-collector/lib/kiosk-profiles.gateStatus().
-    if decision in ("unknown_chaperone", "suspended"):
+    if outside_window:
+        card_state = "info"   # preserve info-card state for outside-window
+    elif decision in ("unknown_chaperone", "wrong_terminal"):
+        card_state = "silent" # written for audit but hidden from iPad
+    elif decision == "suspended":
         card_state = "red"
     elif decision == "reenroll_overdue":
         card_state = "yellow"
@@ -326,7 +538,7 @@ def record_pickup_event(
         card_state = "green"
 
     event_id = uuid.uuid4().hex
-    now_iso = _now().isoformat()
+    now_iso = now_dt.isoformat()
 
     # 6-digit override code for officers — only meaningful for flagged events.
     # Officer enters this in /v2/officer-override to flip the card to approved.
@@ -349,8 +561,8 @@ def record_pickup_event(
         "eventId": event_id,
         "tenantId": tid,
         "employeeNo": employee_no,
-        "scannedAt": scanned_at.isoformat(),
-        "recordedAt": now_iso,
+        "scannedAt": scanned_at,
+        "recordedAt": now_dt,
         "deviceName": device_name,
         "gate": gate or device_name,
         "terminalId": terminal_id,

@@ -10,7 +10,7 @@
 
 ## What's New in v2
 
-Version 2 adds the **PickupGuard** module: a face-recognition system used at the
+Version 2 adds the **Pickup System** module: a face-recognition system used at the
 school gate(s) at dismissal time to verify that the adult collecting a child is
 authorized by the child's parent/guardian.
 

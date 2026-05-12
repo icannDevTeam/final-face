@@ -27,7 +27,11 @@ DEFAULT_PICKUP_SETTINGS = {
     "queueSize": 5,
     "requireLiveness": True,            # decision #1 — always on
     "requireOfficerConfirm": False,
-    "pickupWindow": {"start": "14:00", "end": "17:30"},  # yellow-flag outside this
+    "pickupWindow": {"start": "14:00", "end": "17:30"},  # tenant-default; per-terminal overrides
+    "cooldownSeconds": 300,             # same chap@same terminal silently skipped within this window
+    "warmupMinutes": 30,                # grace minutes BEFORE pickupWindow.start where scans still count
+    "enforceWindow": True,              # outside window → recorded as audit-only 'outside_window'
+    "interParentSeconds": 2,            # global per-terminal throttle between any two scans (anti-collision)
     "outOfWindowAction": "warn",        # 'warn' | 'reject' (decision #5)
     "reEnrollMonths": 12,               # decision #6
     "reminderMonths": 11,
