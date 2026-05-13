@@ -62,23 +62,25 @@ service cloud.firestore {
     // ════════════════════════════════════════════════════════════════
     // Phase A1 — Tenant-scoped paths (multi-tenancy)
     // ════════════════════════════════════════════════════════════════
-    // Auth tokens carry a custom claim `tenantId` and `role` set by the
-    // backend (Admin SDK). Anonymous mobile sessions do NOT carry these
-    // claims yet — for now we accept any authenticated user but require
-    // the `tenantId` claim to match when present.
+    // Auth tokens MUST carry a custom claim `tenantId` (and `role`) set by
+    // the backend (Admin SDK) via the dashboard sign-in or the
+    // `pickup-display` service-account flow. Anonymous Firebase sessions
+    // (mobile PWA) are deliberately NOT granted tenant access — they
+    // continue to use the legacy root-level collections above.
     //
-    // During the dual-read migration window the legacy root-level rules
-    // above remain active. Once cutover completes, those blocks should
-    // be removed and `match /{document=**} { allow read,write: if false }`
-    // restored as the deny-all backstop.
+    // SECURITY (F-002 fix, 2026-05-13): the previous transition fallback
+    //   `|| !('tenantId' in request.auth.token)`
+    // allowed any authenticated user — including anonymous Firebase sign-ins
+    // using the public mobile apiKey — to read every tenant collection.
+    // Removed.
 
     function callerTenant() {
       return request.auth.token.tenantId;
     }
     function isTenantMember(tid) {
       return request.auth != null
-        && (callerTenant() == tid
-            || !('tenantId' in request.auth.token)); // anonymous sessions allowed during transition
+        && 'tenantId' in request.auth.token
+        && callerTenant() == tid;
     }
     function callerRole() {
       return request.auth.token.role;
