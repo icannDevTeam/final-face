@@ -173,6 +173,16 @@ def get_firestore():
                 print(f"  ✓ Terminal registry synced ({n} entries)")
         except Exception as _sync_e:
             print(f"  ⚠ Terminal registry sync skipped: {_sync_e}")
+        # Pre-warm the pickup hot-path caches + start real-time invalidation
+        # so the first scan of the day is already warm (~50ms not ~250ms).
+        try:
+            counts = pickup_event_writer.prewarm_caches()
+            if counts.get("chaperones") or counts.get("students"):
+                print(f"  ✓ Pickup cache prewarmed ({counts['chaperones']} chaperones, {counts['students']} students)")
+            if pickup_event_writer.start_realtime_invalidation():
+                print("  ✓ Pickup cache realtime watch active")
+        except Exception as _pw_e:
+            print(f"  ⚠ Pickup cache prewarm skipped: {_pw_e}")
         return _firestore_client
     except Exception as e:
         print(f"  ⚠ Firebase unavailable: {e}")
@@ -207,10 +217,12 @@ def _start_gate_enforcer():
 
     def _send(cmd):
         # Refresh challenge on 401 so subsequent calls succeed.
+        # Suppress per-call error logs — GateEnforcer throttles repeats itself.
         ok = gate_controller.hik_remote_control_door(
             HIKVISION_IP,
             lambda method, uri: build_digest_auth(method, uri, get_digest_challenge()),
             cmd,
+            log=lambda *a, **k: None,
         )
         if not ok:
             invalidate_challenge()

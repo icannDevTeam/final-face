@@ -102,6 +102,9 @@ class GateEnforcer(threading.Thread):
         self._last_cmd = None
         self._last_send_ts = 0
         self._last_reason = None
+        # Track failed cmd so we don't log the same HTTP 400 every 5 seconds
+        self._last_failed_cmd = None
+        self._last_failed_log_ts = 0
 
     def stop(self):
         self._stop.set()
@@ -133,6 +136,23 @@ class GateEnforcer(threading.Thread):
                         self._last_cmd = desired
                         self._last_send_ts = now_ts
                         self._last_reason = reason
+                        self._last_failed_cmd = None
+                    else:
+                        # Throttle repeat failures: log once, then once every 5 min.
+                        if (
+                            self._last_failed_cmd != desired
+                            or (now_ts - self._last_failed_log_ts) >= 300
+                        ):
+                            self.log(
+                                f"  ⚠ Gate cmd '{desired}' rejected by device "
+                                f"(suppressing repeats for 5 min)"
+                            )
+                            self._last_failed_cmd = desired
+                            self._last_failed_log_ts = now_ts
+                        # Treat as "sent" so we don't retry every 5s in tight loop;
+                        # heartbeat will retry naturally after HEARTBEAT_SECS.
+                        self._last_cmd = desired
+                        self._last_send_ts = now_ts
             except Exception as e:
                 self.log(f"  ⚠ Gate enforcer loop error: {e}")
             self._stop.wait(POLL_SECS)

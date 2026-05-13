@@ -57,9 +57,50 @@ _NOTIFY_TIMEOUT_SEC = 1.5
 _settings_cache: dict[str, tuple[float, dict]] = {}
 _SETTINGS_TTL = 60.0  # seconds
 
+# Hot-path caches — keep the scan→Firestore latency in the low-100ms range.
+# All have short TTLs so admin changes (suspending a chaperone, moving a
+# student, changing terminal scopes) propagate within a minute.
+_chaperone_cache: dict[str, tuple[float, Optional[dict]]] = {}
+_student_cache: dict[str, tuple[float, dict]] = {}
+_terminal_doc_cache: dict[str, tuple[float, dict]] = {}
+_HOT_CACHE_TTL = 300.0  # seconds (5 min) — real-time watcher invalidates on edits
+
+# Active Firestore real-time watches (one per tenant) so admin edits to
+# chaperones/students propagate instantly. Without this, an admin
+# suspending a parent would take up to _HOT_CACHE_TTL seconds to apply.
+_watch_handles: dict[str, list] = {}
+
+# Background executor for non-critical post-write side effects (JPEG upload,
+# security incident log, chaperone lastSeenAt bump, http notify). The hot
+# path returns to the caller as soon as the pickup_events doc is written.
+import concurrent.futures as _futures
+_post_write_pool = _futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="pickup-postwrite"
+)
+
 
 def _now() -> datetime:
     return datetime.now(WIB)
+
+
+def _get_terminal_doc_cached(db, tid: str, terminal_id: Optional[str]) -> dict:
+    """Single cached fetch of tenants/{t}/terminals/{terminal_id}. Both
+    `_terminal_grade_scopes` and `_resolve_window` need this — hit Firestore
+    once per minute, not twice per scan."""
+    if not terminal_id:
+        return {}
+    import time as _time
+    key = f"{tid}|{terminal_id}"
+    cached = _terminal_doc_cache.get(key)
+    if cached and _time.time() - cached[0] < _HOT_CACHE_TTL:
+        return cached[1]
+    try:
+        snap = db.document(f"{tenancy.terminals_path(tid)}/{terminal_id}").get()
+        data = snap.to_dict() if snap.exists else {}
+    except Exception:
+        data = {}
+    _terminal_doc_cache[key] = (_time.time(), data or {})
+    return data or {}
 
 
 def _get_db():
@@ -133,17 +174,12 @@ def _resolve_window(db, tid: str, terminal_id: Optional[str]) -> Optional[dict]:
 
     Returns {"open": HH:MM, "close": HH:MM} or None for always-open.
     """
-    if terminal_id:
-        try:
-            tsnap = db.document(f"{tenancy.terminals_path(tid)}/{terminal_id}").get()
-            if tsnap.exists:
-                td = tsnap.to_dict() or {}
-                w_open = td.get("windowOpen")
-                w_close = td.get("windowClose")
-                if w_open and w_close:
-                    return {"open": w_open, "close": w_close}
-        except Exception:
-            pass
+    td = _get_terminal_doc_cached(db, tid, terminal_id)
+    if td:
+        w_open = td.get("windowOpen")
+        w_close = td.get("windowClose")
+        if w_open and w_close:
+            return {"open": w_open, "close": w_close}
     settings = _get_pickup_settings(tid)
     pw = settings.get("pickupWindow") or {}
     if pw.get("start") and pw.get("end"):
@@ -237,17 +273,10 @@ def _inter_parent_throttle_active(tid: str, terminal_id: Optional[str],
 
 def _terminal_grade_scopes(db, tid: str, terminal_id: Optional[str]) -> list[str]:
     """Return gradeScopes array for a terminal. [] means 'all grades'."""
-    if not terminal_id:
-        return []
-    try:
-        snap = db.document(f"{tenancy.terminals_path(tid)}/{terminal_id}").get()
-        if snap.exists:
-            d = snap.to_dict() or {}
-            scopes = d.get("gradeScopes")
-            if isinstance(scopes, list):
-                return [str(x).strip() for x in scopes if str(x).strip()]
-    except Exception:
-        pass
+    d = _get_terminal_doc_cached(db, tid, terminal_id)
+    scopes = d.get("gradeScopes") if d else None
+    if isinstance(scopes, list):
+        return [str(x).strip() for x in scopes if str(x).strip()]
     return []
 
 
@@ -266,12 +295,22 @@ def _student_grade(student: dict) -> Optional[str]:
 
 
 def _resolve_chaperone(db, tid: str, employee_no: str) -> Optional[dict]:
-    """Find chaperones doc for a 9XXX employeeNo. Returns None if unknown."""
+    """Find chaperones doc for a 9XXX employeeNo. Returns None if unknown.
+
+    60s in-memory cache — chaperones are essentially static during a pickup
+    window (admin suspends/edits propagate within a minute)."""
+    import time as _time
+    cache_key = f"{tid}|{employee_no}"
+    cached = _chaperone_cache.get(cache_key)
+    if cached and _time.time() - cached[0] < _HOT_CACHE_TTL:
+        return cached[1]
+
     chap_id = f"chap-{employee_no}"
     snap = db.document(f"{tenancy.chaperones_path(tid)}/{chap_id}").get()
     if snap.exists:
         d = snap.to_dict()
         d["_id"] = chap_id
+        _chaperone_cache[cache_key] = (_time.time(), d)
         return d
     # Fallback: query by employeeNo field (handles legacy id schemes)
     q = (db.collection(tenancy.chaperones_path(tid))
@@ -279,28 +318,44 @@ def _resolve_chaperone(db, tid: str, employee_no: str) -> Optional[dict]:
     for s in q:
         d = s.to_dict()
         d["_id"] = s.id
+        _chaperone_cache[cache_key] = (_time.time(), d)
         return d
+    # Cache the negative result too so unknown-card spam doesn't keep hitting Firestore
+    _chaperone_cache[cache_key] = (_time.time(), None)
     return None
 
 
 def _resolve_students(db, tid: str, student_ids: list[str]) -> list[dict]:
-    """Pull denormalized student summaries for the TV card."""
+    """Pull denormalized student summaries for the TV card.
+
+    60s in-memory cache per student — student rosters are stable during a
+    pickup window. Cuts ~150ms per student per scan."""
+    import time as _time
     out = []
+    now_ts = _time.time()
     for sid in (student_ids or [])[:10]:  # safety cap
+        cache_key = f"{tid}|{sid}"
+        cached = _student_cache.get(cache_key)
+        if cached and now_ts - cached[0] < _HOT_CACHE_TTL:
+            out.append(cached[1])
+            continue
+
         snap = db.document(f"{tenancy.students_path(tid)}/{sid}").get()
         if not snap.exists:
             # legacy fallback during dual-read window
             snap = db.document(f"students/{sid}").get()
         if snap.exists:
             d = snap.to_dict() or {}
-            out.append({
+            entry = {
                 "id": sid,
                 "name": d.get("name") or d.get("fullName") or sid,
                 "homeroom": d.get("homeroom") or d.get("className"),
                 "photoUrl": d.get("photoUrl"),
-            })
+            }
         else:
-            out.append({"id": sid, "name": sid, "homeroom": None, "photoUrl": None})
+            entry = {"id": sid, "name": sid, "homeroom": None, "photoUrl": None}
+        _student_cache[cache_key] = (now_ts, entry)
+        out.append(entry)
     return out
 
 
@@ -402,6 +457,121 @@ def _publish_http_notify(tenant_id: str, event_id: str) -> None:
     threading.Thread(target=_do_post, daemon=True).start()
 
 
+# ─── Cache pre-warm + real-time invalidation ────────────────────────────────
+def prewarm_caches(tenant_id: Optional[str] = None) -> dict:
+    """Bulk-fetch all chaperones + their authorized students once at startup.
+
+    First scan of the day = warm cache (~50ms instead of ~250ms cold).
+    Returns counts for logging. Best-effort — failures degrade gracefully
+    to lazy per-scan reads.
+    """
+    import time as _time
+    db = _get_db()
+    if not db:
+        return {"chaperones": 0, "students": 0}
+    tid = tenant_id or tenancy.get_tenant_id()
+    now_ts = _time.time()
+    chap_count = 0
+    student_ids: set[str] = set()
+
+    try:
+        for s in db.collection(tenancy.chaperones_path(tid)).stream():
+            d = s.to_dict() or {}
+            d["_id"] = s.id
+            employee_no = d.get("employeeNo") or s.id.replace("chap-", "")
+            _chaperone_cache[f"{tid}|{employee_no}"] = (now_ts, d)
+            chap_count += 1
+            for sid in (d.get("authorizedStudentIds") or []):
+                student_ids.add(sid)
+    except Exception as e:
+        print(f"  ⚠ Chaperone prewarm failed: {e}")
+
+    student_count = 0
+    try:
+        # Firestore SDK supports get_all() — bulk fetch by doc refs.
+        if student_ids:
+            refs = [db.document(f"{tenancy.students_path(tid)}/{sid}")
+                    for sid in student_ids]
+            for snap in db.get_all(refs):
+                if snap.exists:
+                    d = snap.to_dict() or {}
+                    sid = snap.id
+                    entry = {
+                        "id": sid,
+                        "name": d.get("name") or d.get("fullName") or sid,
+                        "homeroom": d.get("homeroom") or d.get("className"),
+                        "photoUrl": d.get("photoUrl"),
+                    }
+                    _student_cache[f"{tid}|{sid}"] = (now_ts, entry)
+                    student_count += 1
+    except Exception as e:
+        print(f"  ⚠ Student prewarm failed: {e}")
+
+    return {"chaperones": chap_count, "students": student_count}
+
+
+def start_realtime_invalidation(tenant_id: Optional[str] = None) -> bool:
+    """Attach Firestore on_snapshot watchers so admin edits to chaperones/
+    students immediately invalidate the in-process cache. Combined with the
+    5-minute TTL, this gives near-instant propagation of suspensions, photo
+    updates, etc., without re-reading on every scan.
+    """
+    db = _get_db()
+    if not db:
+        return False
+    tid = tenant_id or tenancy.get_tenant_id()
+    if tid in _watch_handles:
+        return True  # already watching
+
+    handles = []
+
+    def _on_chap(snapshots, changes, _read_time):
+        import time as _time
+        now_ts = _time.time()
+        for change in changes:
+            doc = change.document
+            d = doc.to_dict() or {}
+            employee_no = d.get("employeeNo") or doc.id.replace("chap-", "")
+            key = f"{tid}|{employee_no}"
+            if change.type.name == "REMOVED":
+                _chaperone_cache.pop(key, None)
+            else:
+                d["_id"] = doc.id
+                _chaperone_cache[key] = (now_ts, d)
+
+    def _on_student(snapshots, changes, _read_time):
+        import time as _time
+        now_ts = _time.time()
+        for change in changes:
+            doc = change.document
+            key = f"{tid}|{doc.id}"
+            if change.type.name == "REMOVED":
+                _student_cache.pop(key, None)
+            else:
+                d = doc.to_dict() or {}
+                _student_cache[key] = (now_ts, {
+                    "id": doc.id,
+                    "name": d.get("name") or d.get("fullName") or doc.id,
+                    "homeroom": d.get("homeroom") or d.get("className"),
+                    "photoUrl": d.get("photoUrl"),
+                })
+
+    try:
+        h1 = db.collection(tenancy.chaperones_path(tid)).on_snapshot(_on_chap)
+        handles.append(h1)
+        h2 = db.collection(tenancy.students_path(tid)).on_snapshot(_on_student)
+        handles.append(h2)
+        _watch_handles[tid] = handles
+        return True
+    except Exception as e:
+        print(f"  ⚠ Realtime cache invalidation failed: {e}")
+        # Roll back any partial handles so we don't leak streams.
+        for h in handles:
+            try: h.unsubscribe()
+            except Exception: pass
+        return False
+
+
 def record_pickup_event(
     *,
     tenant_id: str,
@@ -426,6 +596,8 @@ def record_pickup_event(
     Persist a pickup event. Returns the written doc dict (with id) or None
     on failure. Pure side-effect; caller does not need to do anything else.
     """
+    import time as _time
+    _t0 = _time.perf_counter()
     db = _get_db()
     if not db:
         print("  ⚠ Pickup event skipped — Firestore not initialized")
@@ -547,15 +719,16 @@ def record_pickup_event(
         # uuid hex first 6 chars → digits only via int conversion mod 1e6
         override_code = f"{int(event_id[:8], 16) % 1_000_000:06d}"
 
-    # Save JPEG to Storage (best-effort)
+    # Save JPEG to Storage (deferred to background — we set the deterministic
+    # capturePath upfront so the doc write doesn't wait for the upload).
+    # Worst case: iPad sees the card with placeholder photo for ~1s before
+    # the JPEG lands at the path.
     capture_path = None
     if jpeg_bytes:
         try:
-            from firebase_admin import storage as _storage
-            bucket = _storage.bucket()
-            capture_path = _save_jpeg(bucket, tid, event_id, jpeg_bytes)
-        except Exception as e:
-            print(f"  ⚠ Pickup capture skipped: {e}")
+            capture_path = tenancy.storage_pickup_capture_path(event_id, tid)
+        except Exception:
+            capture_path = None
 
     doc = {
         "eventId": event_id,
@@ -594,34 +767,60 @@ def record_pickup_event(
         print(f"  ⚠ Pickup event write failed: {e}")
         return None
 
-    # Log a security incident for any non-ok decision so admins/Prometheus
-    # can act on them. unknown_chaperone is the most important case.
-    if decision in ("unknown_chaperone", "suspended", "reenroll_overdue"):
-        _log_security_incident(
-            db, tid,
-            kind=decision,
-            event_id=event_id,
-            employee_no=employee_no,
-            gate=gate or device_name,
-            chaperone_name=chap_summary.get("name"),
-        )
+    # ---- Hot path ends here. Everything below is fire-and-forget. ----
+    def _post_write():
+        # 1. JPEG upload — path was already baked into the doc.
+        if jpeg_bytes and capture_path:
+            try:
+                from firebase_admin import storage as _storage
+                bucket_name = os.getenv(
+                    "FIREBASE_STORAGE_BUCKET",
+                    "facial-attendance-binus.firebasestorage.app",
+                )
+                bucket = _storage.bucket(bucket_name)
+                blob = bucket.blob(capture_path)
+                blob.upload_from_string(jpeg_bytes, content_type="image/jpeg")
+            except Exception as e:
+                print(f"  ⚠ Pickup capture upload failed: {e}")
 
-    # Bump chaperone lastSeenAt (best-effort)
-    if chaperone and chap_summary["id"]:
-        try:
-            db.document(f"{tenancy.chaperones_path(tid)}/{chap_summary['id']}").set(
-                {"lastSeenAt": now_iso, "lastSeenGate": gate or device_name},
-                merge=True,
+        # 2. Security incident log for non-ok decisions.
+        if decision in ("unknown_chaperone", "suspended", "reenroll_overdue"):
+            _log_security_incident(
+                db, tid,
+                kind=decision,
+                event_id=event_id,
+                employee_no=employee_no,
+                gate=gate or device_name,
+                chaperone_name=chap_summary.get("name"),
             )
+
+        # 3. Bump chaperone lastSeenAt.
+        if chaperone and chap_summary["id"]:
+            try:
+                db.document(f"{tenancy.chaperones_path(tid)}/{chap_summary['id']}").set(
+                    {"lastSeenAt": now_iso, "lastSeenGate": gate or device_name},
+                    merge=True,
+                )
+            except Exception:
+                pass
+
+        # 4. Push notify (socket + http) so iPads on long-poll wake immediately.
+        try:
+            _publish_socket(doc, gate=gate)
+        except Exception:
+            pass
+        try:
+            _publish_http_notify(tid, event_id)
         except Exception:
             pass
 
-    _publish_socket(doc, gate=gate)
-    _publish_http_notify(tid, event_id)
+    _post_write_pool.submit(_post_write)
 
     pretty = ", ".join(s["name"] for s in students) or "(no students)"
     color = {"green": "🟢", "yellow": "🟡", "red": "🔴"}.get(card_state, "⚪")
+    _elapsed_ms = int((_time.perf_counter() - _t0) * 1000)
     print(f"{color} PICKUP [{scanned_at.strftime('%H:%M:%S')}] "
-          f"{chap_summary['name']} → {pretty}  ({decision})")
+          f"{chap_summary['name']} → {pretty}  ({decision}) "
+          f"[{_elapsed_ms}ms]")
 
     return doc
