@@ -48,6 +48,7 @@ from dotenv import load_dotenv
 # Multi-tenancy helpers (Phase A1) — dual-write to tenant-scoped paths
 import tenancy
 import pickup_event_writer
+import unknown_faces
 
 load_dotenv()
 
@@ -371,6 +372,57 @@ def load_logged_today(date_str: str) -> dict:
     return result
 
 
+# ─── Attendance blocklist (suppress known false-positive events) ─────────────
+
+_BLOCKLIST_FILE = DATA_DIR.parent / "attendance_blocklist.json"
+_blocklist_cache: list[dict] | None = None
+
+
+def _load_blocklist() -> list[dict]:
+    """Load false-positive blocklist (cached). Each entry: employeeNo, timestamp, window_seconds."""
+    global _blocklist_cache
+    if _blocklist_cache is not None:
+        return _blocklist_cache
+    try:
+        if _BLOCKLIST_FILE.exists():
+            _blocklist_cache = json.loads(_BLOCKLIST_FILE.read_text()) or []
+        else:
+            _blocklist_cache = []
+    except Exception as e:
+        print(f"  ⚠ Failed to read attendance blocklist: {e}")
+        _blocklist_cache = []
+    return _blocklist_cache
+
+
+def is_event_blocklisted(emp_no: str, timestamp_str: str) -> tuple[bool, str]:
+    """Return (True, reason) if (emp_no, timestamp) is a known false positive.
+    Entry forms:
+      - {employeeNo, timestamp, window_seconds}  → matches within ±window of that ts
+      - {employeeNo, date}                        → blocks ALL events for emp_no on that YYYY-MM-DD
+    """
+    try:
+        event_dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return False, ""
+    event_date = event_dt.strftime("%Y-%m-%d")
+    for entry in _load_blocklist():
+        if str(entry.get("employeeNo", "")) != str(emp_no):
+            continue
+        # Full-day block
+        if entry.get("date") and entry["date"] == event_date:
+            return True, entry.get("reason", "blocklisted (full day)")
+        # Timestamp-window block
+        if entry.get("timestamp"):
+            try:
+                blk_dt = datetime.strptime(entry["timestamp"], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                continue
+            window = int(entry.get("window_seconds", 5))
+            if abs((event_dt - blk_dt).total_seconds()) <= window:
+                return True, entry.get("reason", "blocklisted")
+    return False, ""
+
+
 # ─── Catch-up sync (pull missed events from device) ──────────────────────────
 
 _event_search_supported = None  # None = unknown, True/False after first check
@@ -585,6 +637,17 @@ def catchup_sync(name_map: dict, logged_today: dict, today: str, use_firebase: b
                 timestamp = event_dt.strftime("%Y-%m-%d %H:%M:%S")
                 status = determine_status(event_dt)
 
+                # Skip known false-positive events (manual blocklist)
+                blocked, reason = is_event_blocklisted(real_emp_no, timestamp)
+                if not blocked:
+                    blocked, reason = is_event_blocklisted(emp_no, timestamp)
+                if blocked:
+                    print(f"  🚫 [catch-up] [{timestamp}] {name} — BLOCKED ({reason})")
+                    # Mark as logged so future catch-ups in the same run skip it too
+                    logged_today[emp_no] = event_dt.timestamp()
+                    logged_today[real_emp_no] = event_dt.timestamp()
+                    continue
+
                 # Record it (mark both HEX and real as logged)
                 logged_today[emp_no] = event_dt.timestamp()
                 logged_today[real_emp_no] = event_dt.timestamp()
@@ -687,6 +750,37 @@ def build_name_map():
             break
 
     return name_map
+
+
+# ─── Unknown / suspicious face capture ───────────────────────────────────────
+#
+# Delegates to the shared unknown_faces module so the same review queue is
+# used by both attendance and PickupGuard pathways.
+
+def _save_unknown_snapshot(
+    jpeg_bytes: bytes,
+    kind: str,                    # "unmatched" | "suspected_false_match"
+    ace: dict,
+    now: datetime,
+    suspected_emp_no: str = "",
+    suspected_name: str = "",
+    reason: str = "",
+) -> str | None:
+    """Thin wrapper over unknown_faces.capture_unknown_face for the listener."""
+    # Ensure Firebase app is initialized before the mirror attempt
+    get_firestore()
+    return unknown_faces.capture_unknown_face(
+        jpeg_bytes=jpeg_bytes,
+        kind=kind,
+        device_ip=HIKVISION_IP,
+        device_name=HIKVISION_DEVICE_NAME,
+        terminal_id=HIKVISION_TERMINAL_ID,
+        suspected_emp_no=suspected_emp_no,
+        suspected_name=suspected_name,
+        reason=reason,
+        when=now,
+        raw_event=ace,
+    )
 
 
 # ─── Attendance storage ──────────────────────────────────────────────────────
@@ -909,10 +1003,19 @@ def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
             major = ace.get("majorEventType", 0)
             sub = ace.get("subEventType", 0)
 
-            if major != 5 or sub not in (75, 76, 104):
+            # Keep all face events (major==5). Known success sub-events
+            # (75/76/104) flow through normal attendance. Other face sub-
+            # events (e.g. faceAuthFailed) are kept so we can capture the
+            # snapshot for unenrolled students — see _emit_event.
+            if major != 5:
                 continue
 
-            pending_event = {"ace": ace, "_today": today, "_jpeg": None}
+            pending_event = {
+                "ace": ace,
+                "_today": today,
+                "_jpeg": None,
+                "_is_known_sub": sub in (75, 76, 104),
+            }
 
         # End of available parts in buffer; if pending event is older than
         # ~1.5s we can flush it without its image (device may have skipped
@@ -932,11 +1035,22 @@ def _emit_event(pending: dict, name_map: dict, logged_today: dict, today: str):
     ace = pending["ace"]
     emp_no = ace.get("employeeNoString", "") or str(ace.get("employeeNo", ""))
     name = ace.get("name", "") or name_map.get(emp_no, "")
+    jpeg = pending.get("_jpeg")
+    is_known_sub = pending.get("_is_known_sub", True)
+    now_capture = datetime.now(WIB)
 
-    if not emp_no or not name:
+    # Face seen but device couldn't match it to any enrolled user.
+    # Previously we captured a JPG + JSON for each of these so an admin
+    # could enrol the unknown person; in practice the device fires bursts
+    # of identity-less events (one every ~2s) when an unenrolled person
+    # stands at the gate, flooding data/unknown_faces/ with hundreds of
+    # near-duplicates that never lead to action. We just drop them now.
+    # (The blocklist branch below still saves snapshots — those are
+    # actionable misidentifications, not anonymous strangers.)
+    if not emp_no or not name or not is_known_sub:
         return
 
-    now = datetime.now(WIB)
+    now = now_capture
     current_date = now.strftime("%Y-%m-%d")
     if current_date != today:
         today = current_date
@@ -970,8 +1084,27 @@ def _emit_event(pending: dict, name_map: dict, logged_today: dict, today: str):
     status = determine_status(now)
     pending["_today"] = current_date
 
-    yield (name, real_emp_no, emp_no, timestamp, status, current_date,
-           pending.get("_jpeg"))
+    # Suppress known false positives (manual blocklist — e.g. mis-recognitions)
+    blocked, reason = is_event_blocklisted(real_emp_no, timestamp)
+    if not blocked:
+        blocked, reason = is_event_blocklisted(emp_no, timestamp)
+    if blocked:
+        print(f"  🚫 [{timestamp}] {name} — BLOCKED ({reason})")
+        # Save the snapshot — a blocklisted match is almost always the
+        # device misidentifying an unenrolled student. The picture is
+        # exactly what we need to enroll the real person.
+        _save_unknown_snapshot(
+            jpeg or b"",
+            kind="suspected_false_match",
+            ace=ace,
+            now=now,
+            suspected_emp_no=real_emp_no,
+            suspected_name=name,
+            reason=reason,
+        )
+        return
+
+    yield (name, real_emp_no, emp_no, timestamp, status, current_date, jpeg)
 
 
 # ─── Main listener ───────────────────────────────────────────────────────────
