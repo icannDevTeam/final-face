@@ -794,6 +794,40 @@ def record_pickup_event(
                 chaperone_name=chap_summary.get("name"),
             )
 
+        # 2b. Mirror the live face into the shared unknown_faces review
+        # queue so an admin can compare it against the enrolled chaperone
+        # photo and re-enroll / unsuspend / clear, using the same dashboard
+        # that handles unknown students. We only do this when we actually
+        # captured a frame from the device — no JPEG means nothing to review.
+        if jpeg_bytes and decision in ("unknown_chaperone", "suspended", "reenroll_overdue"):
+            try:
+                import unknown_faces as _uf
+                _uf.capture_unknown_face(
+                    jpeg_bytes=jpeg_bytes,
+                    kind={
+                        "unknown_chaperone":   "unknown_chaperone",
+                        "suspended":           "suspended_chaperone",
+                        "reenroll_overdue":    "reenroll_overdue_chaperone",
+                    }[decision],
+                    device_ip="",                # not known here; can be added later
+                    device_name=device_name,
+                    terminal_id=terminal_id or "",
+                    suspected_emp_no=employee_no,
+                    suspected_name=chap_summary.get("name") or "",
+                    reason=f"pickup decision={decision}",
+                    when=scanned_at,
+                    tenant_id=tid,
+                    extra={
+                        "pickupEventId": event_id,
+                        "decision": decision,
+                        "gate": gate or device_name,
+                        "students": [s.get("name") for s in (students or []) if s.get("name")],
+                        "enrolledPhotoUrl": chap_summary.get("photoUrl"),
+                    },
+                )
+            except Exception as e:
+                print(f"  ⚠ unknownFaces mirror skipped: {e}")
+
         # 3. Bump chaperone lastSeenAt.
         if chaperone and chap_summary["id"]:
             try:
