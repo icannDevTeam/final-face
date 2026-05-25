@@ -1,1 +1,0 @@
-/home/pandora/Downloads/final-face/web-dataset-collector/pages/api/pickup/admin/kiosk-status.js

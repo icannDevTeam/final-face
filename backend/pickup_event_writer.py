@@ -23,8 +23,6 @@ import json
 import os
 import socket
 import threading
-import urllib.error
-import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -38,20 +36,11 @@ WIB = timezone(timedelta(hours=7))
 
 # Local UNIX socket the SSE fan-out server (P3) listens on. Best-effort —
 # absent socket means we just skip the publish, doc still lives in Firestore
-# and the TV display can fall back to onSnapshot.
+# and the iPad teacher PWA falls back to the Firestore onSnapshot path in
+# pages/api/pickup/tablet/stream.js (SSE) for sub-second delivery.
 PICKUP_EVENT_SOCKET = os.environ.get(
     "PICKUP_EVENT_SOCKET", "/tmp/pickupguard.sock"
 )
-
-# HTTP fan-out to the Next.js SSE bus (Phase 1 of latency optimization).
-# When set, every successful pickup_event write is also POSTed to
-# {INTERNAL_NOTIFY_URL} so connected iPad teacher PWAs get the new card via
-# Server-Sent Events in <1s instead of waiting for the next 2.5s poll.
-# Both env vars must be set for the push to fire; missing config = silent skip
-# (the polling fallback on the iPad still hydrates new events).
-INTERNAL_NOTIFY_URL = os.environ.get("INTERNAL_NOTIFY_URL", "").strip()
-INTERNAL_PUSH_SECRET = os.environ.get("INTERNAL_PUSH_SECRET", "").strip()
-_NOTIFY_TIMEOUT_SEC = 1.5
 
 # Cached pickup_settings per tenant (small TTL — admin changes are rare).
 _settings_cache: dict[str, tuple[float, dict]] = {}
@@ -420,41 +409,6 @@ def _publish_socket(payload: dict, gate: Optional[str] = None) -> None:
         sock.close()
     except Exception:
         pass  # SSE server may not be running yet — this is OK
-
-
-def _publish_http_notify(tenant_id: str, event_id: str) -> None:
-    """Fire-and-forget POST to the Next.js SSE bus so iPads see the new card
-    in <1s instead of waiting for the polling fallback. Runs in a daemon
-    thread so the writer's hot path never blocks on network IO."""
-    if not INTERNAL_NOTIFY_URL or not INTERNAL_PUSH_SECRET:
-        return
-    if not tenant_id or not event_id:
-        return
-
-    def _do_post() -> None:
-        try:
-            body = json.dumps({
-                "tenantId": tenant_id,
-                "eventId": event_id,
-            }).encode("utf-8")
-            req = urllib.request.Request(
-                INTERNAL_NOTIFY_URL,
-                data=body,
-                method="POST",
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Internal-Push-Secret": INTERNAL_PUSH_SECRET,
-                },
-            )
-            with urllib.request.urlopen(req, timeout=_NOTIFY_TIMEOUT_SEC) as resp:
-                resp.read()  # drain
-        except urllib.error.HTTPError as e:
-            print(f"  ⚠ SSE notify HTTP {e.code} for {event_id}")
-        except Exception as e:
-            # Non-fatal — polling fallback covers this.
-            print(f"  ⚠ SSE notify failed for {event_id}: {e}")
-
-    threading.Thread(target=_do_post, daemon=True).start()
 
 
 # ─── Cache pre-warm + real-time invalidation ────────────────────────────────
@@ -838,13 +792,9 @@ def record_pickup_event(
             except Exception:
                 pass
 
-        # 4. Push notify (socket + http) so iPads on long-poll wake immediately.
+        # 4. Push notify so iPads on long-poll wake immediately.
         try:
             _publish_socket(doc, gate=gate)
-        except Exception:
-            pass
-        try:
-            _publish_http_notify(tid, event_id)
         except Exception:
             pass
 

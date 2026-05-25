@@ -1,1 +1,0 @@
-/home/codingcashew/Desktop/Coding/face made for egghead/final-face/web-dataset-collector/pages/api/pickup/admin/student-photo.js
