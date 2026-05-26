@@ -7,6 +7,7 @@ import {
   detectFace,
   isModelsLoaded,
   getLoadedCount,
+  refreshDescriptors,
 } from '../lib/faceRecognition';
 import { createLivenessChecker, detectWithLandmarks } from '../lib/liveness';
 import { checkIn } from '../lib/api';
@@ -572,6 +573,26 @@ export default function ScanPage() {
                 startCamera();
               }}>
                 Retry Camera
+              </button>
+              <button className={styles.retryBtn} onClick={async () => {
+                setStatusMsg('Reloading face database…');
+                try {
+                  const n = await refreshDescriptors((m) => setStatusMsg(m));
+                  if (n === 0) {
+                    setStatusMsg('Database still empty after refresh. Check that students have been enrolled.');
+                  } else {
+                    setLoadedCount(n);
+                    setStatusMsg(`Loaded ${n} students — retrying camera…`);
+                    setPhase('starting');
+                    setModelsReady(true);
+                    stopCamera();
+                    startCamera();
+                  }
+                } catch (e) {
+                  setStatusMsg(`Reload failed: ${e.message}`);
+                }
+              }}>
+                Reload Database
               </button>
               <button className={styles.retryBtn} onClick={() => { stopCamera(); navigate('/'); }}>
                 Go Back
