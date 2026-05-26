@@ -64,6 +64,41 @@ const bucket = admin.storage().bucket();
 // ── Model paths ──
 const MODEL_DIR = path.resolve(__dirname, '../public/models');
 
+// ── CLI filters ──
+// Usage:
+//   node scripts/seed-descriptors.cjs                          # all students
+//   node scripts/seed-descriptors.cjs --grade 5                # only Grade 5 (5A, 5B, …)
+//   node scripts/seed-descriptors.cjs --homeroom 5A            # only homeroom 5A
+//   node scripts/seed-descriptors.cjs --grade 5 --limit 50     # cap to 50 students
+//   node scripts/seed-descriptors.cjs --grade 5 --force        # re-seed even if descriptors exist
+function parseArgs(argv) {
+  const out = { grade: null, homeroom: null, limit: null, force: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--grade' || a === '-g')        out.grade = String(argv[++i] || '').trim();
+    else if (a === '--homeroom' || a === '-r') out.homeroom = String(argv[++i] || '').trim();
+    else if (a === '--limit' || a === '-n')   out.limit = parseInt(argv[++i], 10);
+    else if (a === '--force' || a === '-f')   out.force = true;
+  }
+  return out;
+}
+const ARGS = parseArgs(process.argv.slice(2));
+
+function matchesFilters(student) {
+  const hr = String(student.homeroom || '').trim();
+  if (ARGS.homeroom) {
+    return hr.toLowerCase() === ARGS.homeroom.toLowerCase();
+  }
+  if (ARGS.grade) {
+    // Match by leading digit(s) of homeroom (e.g. '5A' → grade 5) or by gradeCode field.
+    const m = hr.match(/^(\d+)/);
+    const fromHr = m ? m[1] : null;
+    const fromCode = String(student.gradeCode || student.grade || '').match(/^(\d+)/);
+    return fromHr === ARGS.grade || (fromCode && fromCode[1] === ARGS.grade);
+  }
+  return true;
+}
+
 // ── Main ──
 async function main() {
   console.log('🧠 Loading face-api.js models...');
@@ -75,11 +110,45 @@ async function main() {
   // 1. List all students from Firestore
   console.log('📋 Fetching student list from Firestore...');
   const studentsSnap = await db.collection('students').get();
-  const students = [];
+  const allStudents = [];
   studentsSnap.forEach((doc) => {
-    students.push({ id: doc.id, ...doc.data() });
+    allStudents.push({ id: doc.id, ...doc.data() });
   });
-  console.log(`   Found ${students.length} students\n`);
+  console.log(`   Found ${allStudents.length} students total`);
+
+  // Apply filters
+  let students = allStudents.filter(matchesFilters);
+  const filterDesc = ARGS.homeroom
+    ? `homeroom=${ARGS.homeroom}`
+    : ARGS.grade
+    ? `grade=${ARGS.grade}`
+    : 'no filter';
+  console.log(`   Filter: ${filterDesc} → ${students.length} candidates`);
+
+  if (!ARGS.force) {
+    // Skip students that already have descriptors stored. One read per
+    // candidate is fine for a trial run — beats redoing minutes of work.
+    const existingIds = new Set();
+    const batches = [];
+    for (let i = 0; i < students.length; i += 10) {
+      batches.push(students.slice(i, i + 10));
+    }
+    for (const batch of batches) {
+      const refs = batch.map((s) => db.collection('face_descriptors').doc(s.id));
+      const snaps = await db.getAll(...refs);
+      snaps.forEach((sn) => { if (sn.exists) existingIds.add(sn.id); });
+    }
+    if (existingIds.size > 0) {
+      console.log(`   Skipping ${existingIds.size} already-seeded (use --force to re-run)`);
+      students = students.filter((s) => !existingIds.has(s.id));
+    }
+  }
+
+  if (ARGS.limit && students.length > ARGS.limit) {
+    students = students.slice(0, ARGS.limit);
+    console.log(`   --limit applied: capping to ${students.length}`);
+  }
+  console.log(`   → Processing ${students.length} students\n`);
 
   if (students.length === 0) {
     console.log('No students found. Nothing to do.');
