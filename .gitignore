@@ -55,3 +55,6 @@ mobile-attendance/src/components/settings.json
 .venv/
 .vscode/
 backend/devices.local.json.bak.*
+
+# Commit message scratch file (PS 5.1 multi-line workaround)
+.git-commit-msg.tmp
