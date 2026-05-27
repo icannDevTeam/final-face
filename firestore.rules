@@ -231,6 +231,24 @@ service cloud.firestore {
         allow write: if false; // Atomic increment via Admin SDK
       }
 
+      // ── Report runs (M2) + Presets (M6) ────────────────────────────
+      // Both are Admin-SDK-only writes (download-runner + preset API).
+      // Reads are open to all tenant members so the Downloads Hub can
+      // hydrate the "Recently run" rail and "My Presets" tile client-
+      // side; per-row owner filtering happens in the API layer.
+      match /reportRuns/{runId} {
+        allow read: if isTenantMember(tid);
+        allow write: if false;
+      }
+      match /reportPresets/{presetId} {
+        allow read: if isTenantMember(tid);
+        allow write: if false;
+      }
+      match /exportJobs/{jobId} {
+        allow read: if isTenantMember(tid);
+        allow write: if false;
+      }
+
       // ── Catch-all under tenant ─────────────────────────────────────
       match /{document=**} {
         allow read, write: if false;
