@@ -199,6 +199,12 @@ service cloud.firestore {
           allow read: if isTenantMember(tid);
           allow write: if false;
         }
+        // Shadow-delete / restore revision history. Admin SDK writes only;
+        // visible to tenant admins + owners for forensic review.
+        match /revisions/{revisionId} {
+          allow read: if isTenantAdmin(tid) || isTenantOwner(tid);
+          allow write: if false;
+        }
       }
       match /pickup_events/{eventId} {
         allow read: if isTenantMember(tid);
