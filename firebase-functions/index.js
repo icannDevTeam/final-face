@@ -1,0 +1,256 @@
+const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const logger = require('firebase-functions/logger');
+const admin = require('firebase-admin');
+const { Resend } = require('resend');
+
+admin.initializeApp();
+
+const QUEUE_COLLECTION = 'email_queue';
+const TEMPLATE_PICKUP_ONBOARDING = 'pickup_onboarding_confirmation';
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[c]));
+}
+
+function renderPickupOnboardingConfirmationEmail(data) {
+  const guardianName = String(data?.guardianName || '').trim() || 'Parent/Guardian';
+  const formNumber = String(data?.formNumber || '').trim() || '—';
+  const submittedAt = String(data?.submittedAt || '').trim();
+  const studentNames = Array.isArray(data?.studentNames) ? data.studentNames : [];
+
+  const submittedLabel = submittedAt
+    ? new Date(submittedAt).toLocaleString('id-ID', {
+        timeZone: 'Asia/Jakarta',
+        dateStyle: 'long',
+        timeStyle: 'short',
+      })
+    : '-';
+
+  const safeName = escapeHtml(guardianName);
+  const safeForm = escapeHtml(formNumber);
+  const safeDate = escapeHtml(submittedLabel);
+  const safeStudents = studentNames.map(escapeHtml);
+
+  const subject = `BINUS Simprug Pickup - Form ${formNumber} received`;
+
+  const studentListHtml = safeStudents.length
+    ? `<ul style="margin:6px 0 0;padding-left:20px;">${safeStudents.map((n) => `<li style="font-size:14px;line-height:1.7;">${n}</li>`).join('')}</ul>`
+    : '<p style="margin:6px 0 0;font-size:14px;line-height:1.6;color:#4B5563;">No student details provided.</p>';
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#F9FAFB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;background:#F9FAFB;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
+        <tr><td style="background:#0F2A4D;color:#fff;padding:24px 28px;">
+          <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#FFC107;font-weight:700;">BINUS Simprug</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">Pickup Registration Received</div>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">Hi <strong>${safeName}</strong>,</p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#4B5563;">We have received your pickup registration form. Our team will review it and follow up with you.</p>
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px;">
+            <tr><td style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;padding:16px 18px;">
+              <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#4B5563;font-weight:700;">Form Number</div>
+              <div style="font-family:Menlo,Consolas,monospace;font-size:22px;font-weight:700;letter-spacing:1px;color:#0F2A4D;margin-top:8px;">${safeForm}</div>
+              <div style="font-size:12px;color:#4B5563;margin-top:6px;">Submitted: ${safeDate} WIB</div>
+            </td></tr>
+          </table>
+
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;">Student(s) registered:</p>
+          ${studentListHtml}
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 0;">
+            <tr><td style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px 14px;">
+              <div style="font-size:13px;line-height:1.6;color:#1E40AF;">
+                <strong>Need to make changes?</strong><br>
+                Please visit the <strong>ACOP office on the 3rd floor</strong> or email
+                <a href="mailto:inquiries.simprug@binus.edu" style="color:#1D4ED8;">inquiries.simprug@binus.edu</a>.
+                Quote your form number <strong>${safeForm}</strong> when you contact us.
+              </div>
+            </td></tr>
+          </table>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  const studentListText = studentNames.length
+    ? studentNames.map((n) => `  - ${n}`).join('\n')
+    : '  (none)';
+
+  const text = [
+    `Hi ${guardianName},`,
+    '',
+    'We have received your pickup registration form. Our team will review it and follow up with you.',
+    '',
+    `Form number : ${formNumber}`,
+    `Submitted   : ${submittedLabel} WIB`,
+    '',
+    'Student(s) registered:',
+    studentListText,
+    '',
+    'Need to make changes? Please visit the ACOP office on the 3rd floor or email inquiries.simprug@binus.edu.',
+    `Quote your form number ${formNumber} when you contact us.`,
+    '',
+    '- BINUS Simprug Pickup System',
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+function buildTemplate(templateType, templateData) {
+  if (templateType === TEMPLATE_PICKUP_ONBOARDING) {
+    return renderPickupOnboardingConfirmationEmail(templateData || {});
+  }
+  return null;
+}
+
+function getResendClient() {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
+  return new Resend(apiKey);
+}
+
+exports.processEmailQueue = onDocumentCreated(`${QUEUE_COLLECTION}/{jobId}`, async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+
+  const db = admin.firestore();
+  const ref = snap.ref;
+  const jobId = event.params.jobId;
+  const data = snap.data() || {};
+
+  if (data.status !== 'pending') {
+    logger.info('Skipping non-pending email job', { jobId, status: data.status });
+    return;
+  }
+
+  const to = String(data.to || '').trim();
+  const templateType = String(data.templateType || '').trim();
+  const tenantId = data.tenantId || null;
+  const recordId = data.recordId || null;
+  const formNumber = data.formNumber || null;
+
+  if (!to || !templateType) {
+    await ref.set({
+      status: 'failed',
+      error: 'invalid_job_payload',
+      failedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    logger.error('Invalid email job payload', { jobId, tenantId, recordId, formNumber });
+    return;
+  }
+
+  const rendered = buildTemplate(templateType, data.templateData || {});
+  if (!rendered) {
+    await ref.set({
+      status: 'failed',
+      error: 'unknown_template',
+      failedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    logger.error('Unknown email template', { jobId, templateType, tenantId, recordId, formNumber });
+    return;
+  }
+
+  const client = getResendClient();
+  if (!client) {
+    await ref.set({
+      status: 'failed',
+      error: 'email_not_configured',
+      failedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    logger.error('RESEND_API_KEY missing in Cloud Functions env', { jobId, tenantId, recordId, formNumber });
+    return;
+  }
+
+  const fromEmail = process.env.INVITE_FROM_EMAIL || 'onboarding@resend.dev';
+  const fromName = process.env.INVITE_FROM_NAME || 'BINUS Simprug Pickup';
+  const replyTo = process.env.INVITE_REPLY_TO || 'inquiries.simprug@binus.edu';
+
+  const nextRetryCount = Number(data.retryCount || 0) + 1;
+  const maxRetries = Number(data.maxRetries || 3);
+
+  try {
+    const result = await client.emails.send({
+      from: `${fromName} <${fromEmail}>`,
+      to: [to],
+      reply_to: replyTo,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+    });
+
+    const resendError = result?.error?.message || null;
+    if (resendError) {
+      const finalFailure = nextRetryCount >= maxRetries;
+      await ref.set({
+        status: finalFailure ? 'failed_final' : 'failed',
+        error: resendError.slice(0, 500),
+        retryCount: nextRetryCount,
+        failedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      logger.error('Resend API error', {
+        jobId,
+        tenantId,
+        recordId,
+        formNumber,
+        retryCount: nextRetryCount,
+        maxRetries,
+        finalFailure,
+        error: resendError,
+      });
+      return;
+    }
+
+    await ref.set({
+      status: 'sent',
+      provider: 'resend',
+      providerMessageId: result?.data?.id || null,
+      sentAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    logger.info('Email job sent', {
+      jobId,
+      tenantId,
+      recordId,
+      formNumber,
+      providerMessageId: result?.data?.id || null,
+    });
+  } catch (err) {
+    const message = String(err?.message || 'send_failed');
+    const finalFailure = nextRetryCount >= maxRetries;
+    await ref.set({
+      status: finalFailure ? 'failed_final' : 'failed',
+      error: message.slice(0, 500),
+      retryCount: nextRetryCount,
+      failedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    logger.error('Email job send exception', {
+      jobId,
+      tenantId,
+      recordId,
+      formNumber,
+      retryCount: nextRetryCount,
+      maxRetries,
+      finalFailure,
+      error: message,
+    });
+  }
+});

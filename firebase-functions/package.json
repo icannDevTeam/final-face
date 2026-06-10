@@ -1,0 +1,16 @@
+{
+  "name": "final-face-firebase-functions",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "18"
+  },
+  "scripts": {
+    "lint": "node -e \"process.exit(0)\""
+  },
+  "dependencies": {
+    "firebase-admin": "^12.5.0",
+    "firebase-functions": "^5.0.1",
+    "resend": "^3.5.0"
+  }
+}
