@@ -8,6 +8,9 @@ admin.initializeApp();
 
 const QUEUE_COLLECTION = 'email_queue';
 const TEMPLATE_PICKUP_ONBOARDING = 'pickup_onboarding_confirmation';
+const TEMPLATE_PICKUP_ONBOARDING_APPROVED = 'pickup_onboarding_approved';
+const TEMPLATE_PICKUP_ONBOARDING_REJECTED = 'pickup_onboarding_rejected';
+const TEMPLATE_PICKUP_BULK_CAMPAIGN = 'pickup_bulk_campaign';
 
 const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 const INVITE_FROM_EMAIL = defineSecret('INVITE_FROM_EMAIL');
@@ -211,9 +214,303 @@ function renderPickupOnboardingConfirmationEmail(data) {
   return { subject, html, text };
 }
 
+function renderPickupOnboardingApprovedEmail(data) {
+  const guardianName = String(data?.guardianName || '').trim() || 'Parent/Guardian';
+  const formNumber = String(data?.formNumber || '').trim() || '—';
+  const approvedAt = String(data?.approvedAt || '').trim();
+  const approvedBy = String(data?.approvedBy || '').trim() || 'ACOP Team';
+  const students = Array.isArray(data?.students) ? data.students : [];
+  const chaperones = Array.isArray(data?.chaperones) ? data.chaperones : [];
+
+  const approvedLabel = approvedAt
+    ? new Date(approvedAt).toLocaleString('id-ID', {
+        timeZone: 'Asia/Jakarta',
+        dateStyle: 'long',
+        timeStyle: 'short',
+      })
+    : '-';
+
+  const relationLabel = {
+    mother: 'M - Mother',
+    father: 'F - Father',
+    guardian: 'G - Guardian',
+    driver: 'D - Driver',
+  };
+
+  const safeName = escapeHtml(guardianName);
+  const safeForm = escapeHtml(formNumber);
+  const safeApproved = escapeHtml(approvedLabel);
+  const safeApprovedBy = escapeHtml(approvedBy);
+
+  const studentRows = students.length
+    ? `<ul style="margin:6px 0 0;padding-left:20px;">${students.map((s) => {
+      const name = escapeHtml(s?.name || '-');
+      const grade = escapeHtml(s?.gradeSelection || '-');
+      const homeroom = escapeHtml(s?.homeroom || '-');
+      return `<li style="font-size:14px;line-height:1.8;"><strong>${name}</strong> · Grade ${grade} · Homeroom ${homeroom}</li>`;
+    }).join('')}</ul>`
+    : '<p style="margin:6px 0 0;font-size:14px;line-height:1.6;color:#4B5563;">No student details provided.</p>';
+
+  const chaperoneRows = chaperones.length
+    ? `<ul style="margin:6px 0 0;padding-left:20px;">${chaperones.map((c) => {
+      const name = escapeHtml(c?.name || '-');
+      const rel = String(c?.relation || '').trim().toLowerCase();
+      const relation = escapeHtml(relationLabel[rel] || rel || '-');
+      const auth = Array.isArray(c?.authorizedStudentNames) && c.authorizedStudentNames.length
+        ? escapeHtml(c.authorizedStudentNames.join(', '))
+        : '-';
+      return `<li style="font-size:14px;line-height:1.8;"><strong>${name}</strong> · ${relation} · Authorized for: ${auth}</li>`;
+    }).join('')}</ul>`
+    : '<p style="margin:6px 0 0;font-size:14px;line-height:1.6;color:#4B5563;">No chaperone details provided.</p>';
+
+  const subject = `Pickup approved: ${formNumber}`;
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#F9FAFB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;background:#F9FAFB;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
+        <tr><td style="background:#0F2A4D;color:#fff;padding:24px 28px;">
+          <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#FFC107;font-weight:700;">BINUS Simprug</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">Pickup form approved</div>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">Hi <strong>${safeName}</strong>,</p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#4B5563;">Your pickup authorization form has been approved by ACOP.</p>
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px;">
+            <tr><td style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;padding:16px 18px;">
+              <div style="font-size:12px;color:#4B5563;line-height:1.7;">
+                <strong>Form:</strong> ${safeForm}<br>
+                <strong>Approved:</strong> ${safeApproved} WIB<br>
+                <strong>Reviewed by:</strong> ${safeApprovedBy}
+              </div>
+            </td></tr>
+          </table>
+
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;">Children in this form:</p>
+          ${studentRows}
+
+          <p style="margin:16px 0 6px;font-size:13px;font-weight:700;">Authorized pickup people:</p>
+          ${chaperoneRows}
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 0;">
+            <tr><td style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px 14px;">
+              <div style="font-size:13px;line-height:1.6;color:#1E40AF;">
+                <strong>Need to make changes?</strong><br>
+                Please visit the <strong>ACOP office on the 3rd floor</strong> or email
+                <a href="mailto:inquiries.simprug@binus.edu" style="color:#1D4ED8;">inquiries.simprug@binus.edu</a> and quote your form number <strong>${safeForm}</strong>.
+              </div>
+            </td></tr>
+          </table>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  const studentText = students.length
+    ? students.map((s, idx) => `  ${idx + 1}. ${s?.name || '-'} | Grade ${s?.gradeSelection || '-'} | Homeroom ${s?.homeroom || '-'}`).join('\n')
+    : '  (none)';
+  const chaperoneText = chaperones.length
+    ? chaperones.map((c, idx) => {
+      const rel = String(c?.relation || '').trim().toLowerCase();
+      const relation = relationLabel[rel] || rel || '-';
+      const auth = Array.isArray(c?.authorizedStudentNames) && c.authorizedStudentNames.length
+        ? c.authorizedStudentNames.join(', ')
+        : '-';
+      return `  ${idx + 1}. ${c?.name || '-'} | ${relation} | Authorized for: ${auth}`;
+    }).join('\n')
+    : '  (none)';
+
+  const text = [
+    `Hi ${guardianName},`,
+    '',
+    'Your pickup authorization form has been approved by ACOP.',
+    '',
+    `Form number : ${formNumber}`,
+    `Approved    : ${approvedLabel} WIB`,
+    `Reviewed by : ${approvedBy}`,
+    '',
+    'Children in this form:',
+    studentText,
+    '',
+    'Authorized pickup people:',
+    chaperoneText,
+    '',
+    'Need to make changes? Please visit the ACOP office on the 3rd floor or email inquiries.simprug@binus.edu.',
+    `Quote your form number ${formNumber} when you contact us.`,
+    '',
+    '- BINUS Simprug Pickup System',
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+function renderPickupOnboardingRejectedEmail(data) {
+  const guardianName = String(data?.guardianName || '').trim() || 'Parent/Guardian';
+  const formNumber = String(data?.formNumber || '').trim() || '—';
+  const rejectedAt = String(data?.rejectedAt || '').trim();
+  const rejectedBy = String(data?.rejectedBy || '').trim() || 'ACOP Team';
+  const rejectionReason = String(data?.rejectionReason || '').trim() || 'Please contact ACOP for details.';
+  const students = Array.isArray(data?.students) ? data.students : [];
+
+  const rejectedLabel = rejectedAt
+    ? new Date(rejectedAt).toLocaleString('id-ID', {
+        timeZone: 'Asia/Jakarta',
+        dateStyle: 'long',
+        timeStyle: 'short',
+      })
+    : '-';
+
+  const safeName = escapeHtml(guardianName);
+  const safeForm = escapeHtml(formNumber);
+  const safeRejectedAt = escapeHtml(rejectedLabel);
+  const safeRejectedBy = escapeHtml(rejectedBy);
+  const safeReason = escapeHtml(rejectionReason);
+
+  const studentRows = students.length
+    ? `<ul style="margin:6px 0 0;padding-left:20px;">${students.map((s) => {
+      const name = escapeHtml(s?.name || '-');
+      const grade = escapeHtml(s?.gradeSelection || '-');
+      const homeroom = escapeHtml(s?.homeroom || '-');
+      return `<li style="font-size:14px;line-height:1.8;"><strong>${name}</strong> · Grade ${grade} · Homeroom ${homeroom}</li>`;
+    }).join('')}</ul>`
+    : '<p style="margin:6px 0 0;font-size:14px;line-height:1.6;color:#4B5563;">No student details provided.</p>';
+
+  const subject = `Pickup form update: ${formNumber}`;
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#F9FAFB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;background:#F9FAFB;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
+        <tr><td style="background:#0F2A4D;color:#fff;padding:24px 28px;">
+          <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#FFC107;font-weight:700;">BINUS Simprug</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">Pickup form requires update</div>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">Hi <strong>${safeName}</strong>,</p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#4B5563;">Your pickup authorization form needs revision before it can be approved.</p>
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 16px;">
+            <tr><td style="background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:14px 16px;">
+              <div style="font-size:12px;color:#7F1D1D;line-height:1.8;">
+                <strong>Form:</strong> ${safeForm}<br>
+                <strong>Reviewed:</strong> ${safeRejectedAt} WIB<br>
+                <strong>Reviewed by:</strong> ${safeRejectedBy}
+              </div>
+              <div style="margin-top:10px;font-size:13px;color:#7F1D1D;line-height:1.6;">
+                <strong>Notes from ACOP:</strong><br>${safeReason}
+              </div>
+            </td></tr>
+          </table>
+
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;">Children in this submission:</p>
+          ${studentRows}
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 0;">
+            <tr><td style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px 14px;">
+              <div style="font-size:13px;line-height:1.6;color:#1E40AF;">
+                Please visit the <strong>ACOP office on the 3rd floor</strong> or email
+                <a href="mailto:inquiries.simprug@binus.edu" style="color:#1D4ED8;">inquiries.simprug@binus.edu</a>
+                to update your form. Mention form number <strong>${safeForm}</strong>.
+              </div>
+            </td></tr>
+          </table>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  const studentText = students.length
+    ? students.map((s, idx) => `  ${idx + 1}. ${s?.name || '-'} | Grade ${s?.gradeSelection || '-'} | Homeroom ${s?.homeroom || '-'}`).join('\n')
+    : '  (none)';
+
+  const text = [
+    `Hi ${guardianName},`,
+    '',
+    'Your pickup authorization form needs revision before it can be approved.',
+    '',
+    `Form number : ${formNumber}`,
+    `Reviewed    : ${rejectedLabel} WIB`,
+    `Reviewed by : ${rejectedBy}`,
+    '',
+    'Notes from ACOP:',
+    rejectionReason,
+    '',
+    'Children in this submission:',
+    studentText,
+    '',
+    'Please visit the ACOP office on the 3rd floor or email inquiries.simprug@binus.edu to update your form.',
+    `Mention form number ${formNumber} when contacting us.`,
+    '',
+    '- BINUS Simprug Pickup System',
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+function renderPickupBulkCampaignEmail(data) {
+  const subject = String(data?.subject || '').trim() || 'Pickup notice';
+  const recipientName = String(data?.recipientName || '').trim() || 'Parent/Guardian';
+  const studentName = String(data?.studentName || '').trim();
+  const rawMessage = String(data?.message || '').trim();
+  const message = rawMessage || 'Please check your pickup announcement in BINUS channels.';
+
+  const personalized = message
+    .replace(/\{name\}/g, recipientName)
+    .replace(/\{studentName\}/g, studentName || 'your child');
+
+  const safeSubject = escapeHtml(subject);
+  const safeGreeting = escapeHtml(`Dear ${recipientName},`);
+  const safeMessage = escapeHtml(personalized).replace(/\n/g, '<br>');
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>${safeSubject}</title></head>
+<body style="margin:0;padding:0;background:#F9FAFB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;background:#F9FAFB;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
+        <tr><td style="background:#0F2A4D;color:#fff;padding:24px 28px;">
+          <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#FFC107;font-weight:700;">BINUS Simprug</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">${safeSubject}</div>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">${safeGreeting}</p>
+          <p style="margin:0;font-size:14px;line-height:1.8;color:#374151;">${safeMessage}</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  const text = [
+    `Dear ${recipientName},`,
+    '',
+    personalized,
+    '',
+    '- BINUS Simprug Pickup System',
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
 function buildTemplate(templateType, templateData) {
   if (templateType === TEMPLATE_PICKUP_ONBOARDING) {
     return renderPickupOnboardingConfirmationEmail(templateData || {});
+  }
+  if (templateType === TEMPLATE_PICKUP_ONBOARDING_APPROVED) {
+    return renderPickupOnboardingApprovedEmail(templateData || {});
+  }
+  if (templateType === TEMPLATE_PICKUP_ONBOARDING_REJECTED) {
+    return renderPickupOnboardingRejectedEmail(templateData || {});
+  }
+  if (templateType === TEMPLATE_PICKUP_BULK_CAMPAIGN) {
+    return renderPickupBulkCampaignEmail(templateData || {});
   }
   return null;
 }
