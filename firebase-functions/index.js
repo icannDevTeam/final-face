@@ -1,5 +1,6 @@
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const logger = require('firebase-functions/logger');
+const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const { Resend } = require('resend');
 
@@ -7,6 +8,15 @@ admin.initializeApp();
 
 const QUEUE_COLLECTION = 'email_queue';
 const TEMPLATE_PICKUP_ONBOARDING = 'pickup_onboarding_confirmation';
+
+const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
+const INVITE_FROM_EMAIL = defineSecret('INVITE_FROM_EMAIL');
+const INVITE_FROM_NAME = defineSecret('INVITE_FROM_NAME');
+const INVITE_REPLY_TO = defineSecret('INVITE_REPLY_TO');
+
+function isEmailLike(value) {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(value || '').trim());
+}
 
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
@@ -116,12 +126,15 @@ function buildTemplate(templateType, templateData) {
 }
 
 function getResendClient() {
-  const apiKey = process.env.RESEND_API_KEY;
+  const apiKey = String(RESEND_API_KEY.value() || '').trim();
   if (!apiKey) return null;
   return new Resend(apiKey);
 }
 
-exports.processEmailQueue = onDocumentCreated(`${QUEUE_COLLECTION}/{jobId}`, async (event) => {
+exports.processEmailQueue = onDocumentCreated({
+  document: `${QUEUE_COLLECTION}/{jobId}`,
+  secrets: [RESEND_API_KEY, INVITE_FROM_EMAIL, INVITE_FROM_NAME, INVITE_REPLY_TO],
+}, async (event) => {
   const snap = event.data;
   if (!snap) return;
 
@@ -176,22 +189,27 @@ exports.processEmailQueue = onDocumentCreated(`${QUEUE_COLLECTION}/{jobId}`, asy
     return;
   }
 
-  const fromEmail = process.env.INVITE_FROM_EMAIL || 'onboarding@resend.dev';
-  const fromName = process.env.INVITE_FROM_NAME || 'BINUS Simprug Pickup';
-  const replyTo = process.env.INVITE_REPLY_TO || 'inquiries.simprug@binus.edu';
+  const fromEmail = String(INVITE_FROM_EMAIL.value() || '').trim() || 'onboarding@resend.dev';
+  const fromName = String(INVITE_FROM_NAME.value() || '').trim() || 'BINUS Simprug Pickup';
+  const replyToRaw = String(INVITE_REPLY_TO.value() || '').trim();
+  const includeReplyTo = isEmailLike(replyToRaw);
 
   const nextRetryCount = Number(data.retryCount || 0) + 1;
   const maxRetries = Number(data.maxRetries || 3);
 
   try {
-    const result = await client.emails.send({
+    const payload = {
       from: `${fromName} <${fromEmail}>`,
       to: [to],
-      reply_to: replyTo,
       subject: rendered.subject,
       html: rendered.html,
       text: rendered.text,
-    });
+    };
+    if (includeReplyTo) {
+      payload.reply_to = replyToRaw;
+    }
+
+    const result = await client.emails.send(payload);
 
     const resendError = result?.error?.message || null;
     if (resendError) {
