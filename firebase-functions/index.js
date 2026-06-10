@@ -30,9 +30,14 @@ function escapeHtml(s) {
 
 function renderPickupOnboardingConfirmationEmail(data) {
   const guardianName = String(data?.guardianName || '').trim() || 'Parent/Guardian';
+  const guardianEmail = String(data?.guardianEmail || '').trim();
+  const guardianPhone = String(data?.guardianPhone || '').trim();
+  const consentSignature = String(data?.consentSignature || '').trim();
   const formNumber = String(data?.formNumber || '').trim() || '—';
   const submittedAt = String(data?.submittedAt || '').trim();
   const studentNames = Array.isArray(data?.studentNames) ? data.studentNames : [];
+  const students = Array.isArray(data?.students) ? data.students : [];
+  const chaperones = Array.isArray(data?.chaperones) ? data.chaperones : [];
 
   const submittedLabel = submittedAt
     ? new Date(submittedAt).toLocaleString('id-ID', {
@@ -46,12 +51,51 @@ function renderPickupOnboardingConfirmationEmail(data) {
   const safeForm = escapeHtml(formNumber);
   const safeDate = escapeHtml(submittedLabel);
   const safeStudents = studentNames.map(escapeHtml);
+  const relationLabel = {
+    mother: 'M - Mother',
+    father: 'F - Father',
+    guardian: 'G - Guardian',
+    driver: 'D - Driver',
+  };
 
   const subject = `BINUS Simprug Pickup - Form ${formNumber} received`;
 
   const studentListHtml = safeStudents.length
     ? `<ul style="margin:6px 0 0;padding-left:20px;">${safeStudents.map((n) => `<li style="font-size:14px;line-height:1.7;">${n}</li>`).join('')}</ul>`
     : '<p style="margin:6px 0 0;font-size:14px;line-height:1.6;color:#4B5563;">No student details provided.</p>';
+
+  const studentDetailRows = students.length
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;border-collapse:collapse;">${students.map((s, idx) => {
+      const itemName = escapeHtml(s?.name || '-');
+      const itemGrade = escapeHtml(s?.gradeSelection || '-');
+      const itemHomeroom = escapeHtml(s?.homeroom || '-');
+      return `<tr>
+        <td style="padding:8px 0;border-bottom:1px solid #E5E7EB;font-size:13px;color:#111827;vertical-align:top;width:26px;">${idx + 1}.</td>
+        <td style="padding:8px 0;border-bottom:1px solid #E5E7EB;font-size:13px;color:#111827;vertical-align:top;">
+          <div style="font-weight:600;">${itemName}</div>
+          <div style="margin-top:2px;color:#4B5563;">Grade: ${itemGrade} · Homeroom: ${itemHomeroom}</div>
+        </td>
+      </tr>`;
+    }).join('')}</table>`
+    : '<p style="margin:8px 0 0;font-size:13px;color:#4B5563;">No detailed student entries.</p>';
+
+  const chaperoneRows = chaperones.length
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;border-collapse:collapse;">${chaperones.map((c, idx) => {
+      const itemName = escapeHtml(c?.name || '-');
+      const rel = String(c?.relation || '').trim().toLowerCase();
+      const itemRelation = escapeHtml(relationLabel[rel] || rel || '-');
+      const authNames = Array.isArray(c?.authorizedStudentNames) ? c.authorizedStudentNames : [];
+      const authLabel = authNames.length ? escapeHtml(authNames.join(', ')) : '-';
+      return `<tr>
+        <td style="padding:8px 0;border-bottom:1px solid #E5E7EB;font-size:13px;color:#111827;vertical-align:top;width:26px;">${idx + 1}.</td>
+        <td style="padding:8px 0;border-bottom:1px solid #E5E7EB;font-size:13px;color:#111827;vertical-align:top;">
+          <div style="font-weight:600;">${itemName}</div>
+          <div style="margin-top:2px;color:#4B5563;">Relation: ${itemRelation}</div>
+          <div style="margin-top:2px;color:#4B5563;">Authorized for: ${authLabel}</div>
+        </td>
+      </tr>`;
+    }).join('')}</table>`
+    : '<p style="margin:8px 0 0;font-size:13px;color:#4B5563;">No chaperone entries.</p>';
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
@@ -67,6 +111,17 @@ function renderPickupOnboardingConfirmationEmail(data) {
           <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">Hi <strong>${safeName}</strong>,</p>
           <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#4B5563;">We have received your pickup registration form. Our team will review it and follow up with you.</p>
 
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 16px;">
+            <tr><td style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;padding:12px 14px;">
+              <div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#4B5563;font-weight:700;margin-bottom:6px;">Parent details</div>
+              <div style="font-size:13px;line-height:1.7;color:#111827;">
+                <strong>Name:</strong> ${safeName}<br>
+                <strong>Email:</strong> ${escapeHtml(guardianEmail || '-')}<br>
+                <strong>Phone:</strong> ${escapeHtml(guardianPhone || '-')}
+              </div>
+            </td></tr>
+          </table>
+
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px;">
             <tr><td style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;padding:16px 18px;">
               <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#4B5563;font-weight:700;">Form Number</div>
@@ -77,6 +132,16 @@ function renderPickupOnboardingConfirmationEmail(data) {
 
           <p style="margin:0 0 6px;font-size:13px;font-weight:700;">Student(s) registered:</p>
           ${studentListHtml}
+
+          <p style="margin:16px 0 6px;font-size:13px;font-weight:700;">Submitted student details:</p>
+          ${studentDetailRows}
+
+          <p style="margin:16px 0 6px;font-size:13px;font-weight:700;">Authorized pickup people:</p>
+          ${chaperoneRows}
+
+          <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:#4B5563;">
+            <strong>Consent signature:</strong> ${escapeHtml(consentSignature || guardianName || '-')}
+          </p>
 
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 0;">
             <tr><td style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px 14px;">
@@ -98,6 +163,21 @@ function renderPickupOnboardingConfirmationEmail(data) {
     ? studentNames.map((n) => `  - ${n}`).join('\n')
     : '  (none)';
 
+  const studentDetailText = students.length
+    ? students.map((s, idx) => `  ${idx + 1}. ${(s?.name || '-')} | Grade ${s?.gradeSelection || '-'} | Homeroom ${s?.homeroom || '-'}`).join('\n')
+    : '  (none)';
+
+  const chaperoneText = chaperones.length
+    ? chaperones.map((c, idx) => {
+      const rel = String(c?.relation || '').trim().toLowerCase();
+      const relation = relationLabel[rel] || rel || '-';
+      const auth = Array.isArray(c?.authorizedStudentNames) && c.authorizedStudentNames.length
+        ? c.authorizedStudentNames.join(', ')
+        : '-';
+      return `  ${idx + 1}. ${(c?.name || '-')} | ${relation} | Authorized for: ${auth}`;
+    }).join('\n')
+    : '  (none)';
+
   const text = [
     `Hi ${guardianName},`,
     '',
@@ -106,8 +186,21 @@ function renderPickupOnboardingConfirmationEmail(data) {
     `Form number : ${formNumber}`,
     `Submitted   : ${submittedLabel} WIB`,
     '',
+    'Parent details:',
+    `  Name : ${guardianName}`,
+    `  Email: ${guardianEmail || '-'}`,
+    `  Phone: ${guardianPhone || '-'}`,
+    '',
     'Student(s) registered:',
     studentListText,
+    '',
+    'Submitted student details:',
+    studentDetailText,
+    '',
+    'Authorized pickup people:',
+    chaperoneText,
+    '',
+    `Consent signature: ${consentSignature || guardianName || '-'}`,
     '',
     'Need to make changes? Please visit the ACOP office on the 3rd floor or email inquiries.simprug@binus.edu.',
     `Quote your form number ${formNumber} when you contact us.`,
