@@ -11,6 +11,7 @@ const TEMPLATE_PICKUP_ONBOARDING = 'pickup_onboarding_confirmation';
 const TEMPLATE_PICKUP_ONBOARDING_APPROVED = 'pickup_onboarding_approved';
 const TEMPLATE_PICKUP_ONBOARDING_REJECTED = 'pickup_onboarding_rejected';
 const TEMPLATE_PICKUP_BULK_CAMPAIGN = 'pickup_bulk_campaign';
+const TEMPLATE_PICKUP_INVITE_LINK = 'pickup_invite_link';
 
 const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 const INVITE_FROM_EMAIL = defineSecret('INVITE_FROM_EMAIL');
@@ -512,6 +513,65 @@ function renderPickupBulkCampaignEmail(data) {
   return { subject, html, text };
 }
 
+function renderPickupInviteLinkEmail(data) {
+  const recipientName = String(data?.recipientName || '').trim() || 'Parent/Guardian';
+  const studentName = String(data?.studentName || '').trim();
+  const inviteUrl = String(data?.inviteUrl || '').trim();
+  const linkName = String(data?.linkName || '').trim() || 'Pickup Onboarding Form';
+  const expiresAt = data?.expiresAt ? new Date(data.expiresAt) : null;
+  const expiryText = expiresAt && !Number.isNaN(expiresAt.getTime())
+    ? expiresAt.toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Asia/Jakarta' }) + ' WIB'
+    : '';
+
+  const subject = 'Action needed: Register your child\u2019s pickup chaperones';
+  const safeGreeting = escapeHtml(`Dear ${recipientName},`);
+  const studentLine = studentName
+    ? `We invite you to register the authorized pickup chaperones for <strong>${escapeHtml(studentName)}</strong>.`
+    : 'We invite you to register the authorized pickup chaperones for your child.';
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#F9FAFB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;background:#F9FAFB;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
+        <tr><td style="background:#0F2A4D;color:#fff;padding:24px 28px;">
+          <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#FFC107;font-weight:700;">BINUS Simprug</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">Student Pickup Registration</div>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">${safeGreeting}</p>
+          <p style="margin:0 0 18px;font-size:14px;line-height:1.8;color:#374151;">${studentLine} This helps us keep dismissal safe and quick \u2014 only registered chaperones may pick up students.</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;">
+            <tr><td style="border-radius:8px;background:#0F2A4D;">
+              <a href="${escapeHtml(inviteUrl)}" style="display:inline-block;padding:13px 28px;font-size:15px;font-weight:700;color:#FFC107;text-decoration:none;">Open Pickup Form &rarr;</a>
+            </td></tr>
+          </table>
+          <p style="margin:0 0 14px;font-size:12px;line-height:1.6;color:#6B7280;text-align:center;">If the button does not work, copy and paste this link:<br><a href="${escapeHtml(inviteUrl)}" style="color:#0F2A4D;word-break:break-all;">${escapeHtml(inviteUrl)}</a></p>
+          ${expiryText ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;"><tr><td style="padding:12px 16px;font-size:13px;line-height:1.6;color:#92400E;"><strong>Note:</strong> This link (${escapeHtml(linkName)}) expires on ${escapeHtml(expiryText)}. Please complete the form before then.</td></tr></table>` : ''}
+        </td></tr>${SPIRIT_FOOTER_HTML}
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  const text = [
+    `Dear ${recipientName},`,
+    '',
+    studentName
+      ? `We invite you to register the authorized pickup chaperones for ${studentName}.`
+      : 'We invite you to register the authorized pickup chaperones for your child.',
+    'Only registered chaperones may pick up students.',
+    '',
+    `Open the pickup form: ${inviteUrl}`,
+    expiryText ? `\nThis link (${linkName}) expires on ${expiryText}.` : '',
+    '',
+    '- BINUS Simprug Pickup System',
+  ].filter((l) => l !== null).join('\n');
+
+  return { subject, html, text };
+}
+
 function buildTemplate(templateType, templateData) {
   if (templateType === TEMPLATE_PICKUP_ONBOARDING) {
     return renderPickupOnboardingConfirmationEmail(templateData || {});
@@ -524,6 +584,9 @@ function buildTemplate(templateType, templateData) {
   }
   if (templateType === TEMPLATE_PICKUP_BULK_CAMPAIGN) {
     return renderPickupBulkCampaignEmail(templateData || {});
+  }
+  if (templateType === TEMPLATE_PICKUP_INVITE_LINK) {
+    return renderPickupInviteLinkEmail(templateData || {});
   }
   return null;
 }
