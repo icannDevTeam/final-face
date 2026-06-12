@@ -1,4 +1,5 @@
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 const logger = require('firebase-functions/logger');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
@@ -12,6 +13,12 @@ const TEMPLATE_PICKUP_ONBOARDING_APPROVED = 'pickup_onboarding_approved';
 const TEMPLATE_PICKUP_ONBOARDING_REJECTED = 'pickup_onboarding_rejected';
 const TEMPLATE_PICKUP_BULK_CAMPAIGN = 'pickup_bulk_campaign';
 const TEMPLATE_PICKUP_INVITE_LINK = 'pickup_invite_link';
+const TEMPLATE_PICKUP_WEEKLY_REPORT = 'pickup_weekly_report';
+const TEMPLATE_PICKUP_SECURITY_INCIDENT = 'pickup_security_incident';
+
+const DEFAULT_TENANT_ID = 'binus-simprug';
+const WEEKLY_REPORT_RECIPIENTS = ['via@binus.edu'];
+const SECURITY_ALERT_RECIPIENTS = ['albert.arthur@binus.edu', 'johnchandra@binus.edu'];
 
 const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 const INVITE_FROM_EMAIL = defineSecret('INVITE_FROM_EMAIL');
@@ -572,6 +579,183 @@ function renderPickupInviteLinkEmail(data) {
   return { subject, html, text };
 }
 
+function renderPickupWeeklyReportEmail(data) {
+  const weekStart = String(data?.weekStart || '').trim();
+  const weekEnd = String(data?.weekEnd || '').trim();
+  const total = Number(data?.total || 0);
+  const byStatus = data?.byStatus || {};
+  const daily = Array.isArray(data?.daily) ? data.daily : [];
+  const recent = Array.isArray(data?.recent) ? data.recent : [];
+
+  const fmtDay = (iso) => iso
+    ? new Date(iso).toLocaleDateString('en-GB', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short', year: 'numeric' })
+    : '-';
+  const rangeLabel = `${fmtDay(weekStart)} – ${fmtDay(weekEnd)}`;
+  const subject = `Pickup forms weekly report: ${total} submission${total === 1 ? '' : 's'} (${rangeLabel})`;
+
+  const statusRows = [
+    ['Pending review', byStatus.pending || 0, '#B45309'],
+    ['Approved', byStatus.approved || 0, '#047857'],
+    ['Rejected', byStatus.rejected || 0, '#B91C1C'],
+    ['Archived', byStatus.archived || 0, '#4B5563'],
+  ].map(([label, n, color]) => `<tr>
+    <td style="padding:8px 0;border-bottom:1px solid #E5E7EB;font-size:13px;color:#111827;">${label}</td>
+    <td style="padding:8px 0;border-bottom:1px solid #E5E7EB;font-size:14px;font-weight:700;color:${color};text-align:right;">${n}</td>
+  </tr>`).join('');
+
+  const dailyRows = daily.map((d) => `<tr>
+    <td style="padding:6px 0;border-bottom:1px solid #F3F4F6;font-size:12px;color:#4B5563;">${escapeHtml(d.label || d.date || '-')}</td>
+    <td style="padding:6px 0;border-bottom:1px solid #F3F4F6;font-size:12px;font-weight:700;color:#0F2A4D;text-align:right;">${Number(d.count || 0)}</td>
+  </tr>`).join('');
+
+  const recentRows = recent.length
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;border-collapse:collapse;">${recent.map((r) => `<tr>
+        <td style="padding:6px 0;border-bottom:1px solid #F3F4F6;font-size:12px;color:#111827;">
+          <span style="font-family:Menlo,Consolas,monospace;font-weight:700;color:#0F2A4D;">${escapeHtml(r.formNumber || '-')}</span>
+          &nbsp;·&nbsp;${escapeHtml(r.guardianName || '-')}
+          &nbsp;·&nbsp;<span style="color:#6B7280;">${escapeHtml(r.status || '-')}</span>
+        </td>
+      </tr>`).join('')}</table>`
+    : '<p style="margin:8px 0 0;font-size:12px;color:#6B7280;">No submissions this week.</p>';
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#F9FAFB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;background:#F9FAFB;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
+        <tr><td style="background:#0F2A4D;color:#fff;padding:24px 28px;">
+          <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#FFC107;font-weight:700;">BINUS Simprug · Pickup System</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">Weekly Forms Report</div>
+          <div style="font-size:12px;color:#CBD5E1;margin-top:4px;">${escapeHtml(rangeLabel)}</div>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px;">
+            <tr><td style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;padding:16px 18px;text-align:center;">
+              <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#4B5563;font-weight:700;">Total submissions this week</div>
+              <div style="font-size:36px;font-weight:800;color:#0F2A4D;margin-top:6px;">${total}</div>
+            </td></tr>
+          </table>
+
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;">By status</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:18px;">${statusRows}</table>
+
+          ${dailyRows ? `<p style="margin:0 0 6px;font-size:13px;font-weight:700;">Per day</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:18px;">${dailyRows}</table>` : ''}
+
+          <p style="margin:0 0 0;font-size:13px;font-weight:700;">Latest submissions</p>
+          ${recentRows}
+        </td></tr>${SPIRIT_FOOTER_HTML}
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  const text = [
+    `Pickup forms weekly report (${rangeLabel})`,
+    '',
+    `Total submissions: ${total}`,
+    `  Pending : ${byStatus.pending || 0}`,
+    `  Approved: ${byStatus.approved || 0}`,
+    `  Rejected: ${byStatus.rejected || 0}`,
+    `  Archived: ${byStatus.archived || 0}`,
+    '',
+    'Per day:',
+    ...(daily.length ? daily.map((d) => `  ${d.label || d.date}: ${d.count || 0}`) : ['  (none)']),
+    '',
+    'Latest submissions:',
+    ...(recent.length ? recent.map((r) => `  ${r.formNumber || '-'} | ${r.guardianName || '-'} | ${r.status || '-'}`) : ['  (none)']),
+    '',
+    '- BINUS Simprug Pickup System',
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+function renderPickupSecurityIncidentEmail(data) {
+  const type = String(data?.type || data?.kind || 'security_incident').trim();
+  const createdAt = String(data?.createdAt || '').trim();
+  const gate = String(data?.gate || data?.terminalId || data?.source || '-').trim();
+  const chaperoneName = String(data?.chaperoneName || '').trim();
+  const studentName = String(data?.studentName || '').trim();
+  const notes = String(data?.notes || data?.summary || '').trim();
+  const eventId = String(data?.eventId || data?.incidentId || '-').trim();
+  const confidence = data?.confidence != null ? Number(data.confidence) : null;
+  const livenessScore = data?.livenessScore != null ? Number(data.livenessScore) : null;
+
+  const typeLabel = {
+    spoof_attempt: 'GPS / Spoof Attempt',
+    liveness_failure: 'Liveness Check Failure',
+    low_confidence: 'Low-Confidence Face Match',
+    unknown_face: 'Unknown Face at Gate',
+    officer_override: 'Officer Override',
+  }[type] || type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const whenLabel = createdAt
+    ? new Date(createdAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'long', timeStyle: 'medium' })
+    : '-';
+
+  const subject = `[SECURITY] ${typeLabel} — Pickup System`;
+
+  const detailRows = [
+    ['Incident type', typeLabel],
+    ['When', `${whenLabel} WIB`],
+    ['Gate / source', gate || '-'],
+    chaperoneName ? ['Chaperone', chaperoneName] : null,
+    studentName ? ['Student', studentName] : null,
+    confidence != null && !Number.isNaN(confidence) ? ['Match confidence', `${(confidence * 100).toFixed(1)}%`] : null,
+    livenessScore != null && !Number.isNaN(livenessScore) ? ['Liveness score', livenessScore.toFixed(2)] : null,
+    ['Event ID', eventId],
+  ].filter(Boolean).map(([k, v]) => `<tr>
+    <td style="padding:7px 0;border-bottom:1px solid #FECACA;font-size:12px;color:#7F1D1D;font-weight:700;width:40%;">${escapeHtml(k)}</td>
+    <td style="padding:7px 0;border-bottom:1px solid #FECACA;font-size:13px;color:#111827;">${escapeHtml(v)}</td>
+  </tr>`).join('');
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#F9FAFB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;background:#F9FAFB;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
+        <tr><td style="background:#7F1D1D;color:#fff;padding:24px 28px;">
+          <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#FCA5A5;font-weight:700;">BINUS Simprug · Security Alert</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">${escapeHtml(typeLabel)}</div>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#4B5563;">A security incident was just recorded by the pickup system. Details below.</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 16px;">
+            <tr><td style="background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:14px 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">${detailRows}</table>
+              ${notes ? `<div style="margin-top:10px;font-size:13px;color:#7F1D1D;line-height:1.6;"><strong>Notes:</strong><br>${escapeHtml(notes)}</div>` : ''}
+            </td></tr>
+          </table>
+          <p style="margin:0;font-size:12px;line-height:1.6;color:#6B7280;">Review this incident on the dashboard → <strong>Pickup Security</strong> page. If this looks like an active threat, contact the gate officer immediately.</p>
+        </td></tr>${SPIRIT_FOOTER_HTML}
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  const text = [
+    `SECURITY ALERT — ${typeLabel}`,
+    '',
+    `When        : ${whenLabel} WIB`,
+    `Gate/source : ${gate || '-'}`,
+    chaperoneName ? `Chaperone   : ${chaperoneName}` : null,
+    studentName ? `Student     : ${studentName}` : null,
+    confidence != null && !Number.isNaN(confidence) ? `Confidence  : ${(confidence * 100).toFixed(1)}%` : null,
+    livenessScore != null && !Number.isNaN(livenessScore) ? `Liveness    : ${livenessScore.toFixed(2)}` : null,
+    `Event ID    : ${eventId}`,
+    notes ? `\nNotes:\n${notes}` : null,
+    '',
+    'Review this incident on the dashboard (Pickup Security page).',
+    '',
+    '- BINUS Simprug Pickup System',
+  ].filter((l) => l !== null).join('\n');
+
+  return { subject, html, text };
+}
+
 function buildTemplate(templateType, templateData) {
   if (templateType === TEMPLATE_PICKUP_ONBOARDING) {
     return renderPickupOnboardingConfirmationEmail(templateData || {});
@@ -587,6 +771,12 @@ function buildTemplate(templateType, templateData) {
   }
   if (templateType === TEMPLATE_PICKUP_INVITE_LINK) {
     return renderPickupInviteLinkEmail(templateData || {});
+  }
+  if (templateType === TEMPLATE_PICKUP_WEEKLY_REPORT) {
+    return renderPickupWeeklyReportEmail(templateData || {});
+  }
+  if (templateType === TEMPLATE_PICKUP_SECURITY_INCIDENT) {
+    return renderPickupSecurityIncidentEmail(templateData || {});
   }
   return null;
 }
@@ -737,4 +927,122 @@ exports.processEmailQueue = onDocumentCreated({
       error: message,
     });
   }
+});
+
+function enqueueEmail(db, jobId, payload) {
+  return db.collection(QUEUE_COLLECTION).doc(jobId).create({
+    status: 'pending',
+    retryCount: 0,
+    maxRetries: 3,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    ...payload,
+  });
+}
+
+// ─── Weekly forms-submission report (every Monday 08:00 WIB) ────────────────
+exports.weeklyPickupReport = onSchedule({
+  schedule: '0 8 * * 1',
+  timeZone: 'Asia/Jakarta',
+  region: 'asia-southeast2',
+}, async () => {
+  const db = admin.firestore();
+  const tid = DEFAULT_TENANT_ID;
+  const now = Date.now();
+  const weekStartMs = now - 7 * 24 * 3600 * 1000;
+  const weekStartIso = new Date(weekStartMs).toISOString();
+  const weekEndIso = new Date(now).toISOString();
+
+  const snap = await db.collection(`tenants/${tid}/pickup_onboarding`)
+    .where('submittedAt', '>=', weekStartIso)
+    .orderBy('submittedAt', 'desc')
+    .limit(1000)
+    .get();
+
+  const byStatus = { pending: 0, approved: 0, rejected: 0, archived: 0 };
+  const dayCounts = new Map();
+  const recent = [];
+  snap.forEach((doc) => {
+    const d = doc.data();
+    const s = d.status || 'pending';
+    if (byStatus[s] != null) byStatus[s] += 1;
+    const dayLabel = d.submittedAt
+      ? new Date(d.submittedAt).toLocaleDateString('en-GB', { timeZone: 'Asia/Jakarta', weekday: 'short', day: 'numeric', month: 'short' })
+      : 'unknown';
+    dayCounts.set(dayLabel, (dayCounts.get(dayLabel) || 0) + 1);
+    if (recent.length < 10) {
+      recent.push({
+        formNumber: d.formNumber || doc.id,
+        guardianName: d.guardian?.name || '-',
+        status: s,
+      });
+    }
+  });
+
+  const weekTag = weekEndIso.slice(0, 10);
+  const results = await Promise.allSettled(WEEKLY_REPORT_RECIPIENTS.map((to) =>
+    enqueueEmail(db, `weekly-report-${tid}-${weekTag}-${to.replace(/[^a-z0-9]/gi, '_')}`, {
+      to,
+      templateType: TEMPLATE_PICKUP_WEEKLY_REPORT,
+      tenantId: tid,
+      source: 'weekly_pickup_report',
+      templateData: {
+        weekStart: weekStartIso,
+        weekEnd: weekEndIso,
+        total: snap.size,
+        byStatus,
+        daily: Array.from(dayCounts.entries()).map(([label, count]) => ({ label, count })),
+        recent,
+      },
+    })
+  ));
+  const queued = results.filter((r) => r.status === 'fulfilled').length;
+  logger.info('Weekly pickup report queued', { total: snap.size, byStatus, queued, weekTag });
+});
+
+// ─── Security incident alert (instant email on new incident) ────────────────
+exports.securityIncidentAlert = onDocumentCreated({
+  document: 'tenants/{tenantId}/security_incidents/{incidentId}',
+  region: 'asia-southeast2',
+}, async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const db = admin.firestore();
+  const { tenantId, incidentId } = event.params;
+  const d = snap.data() || {};
+
+  const pick = (v) => {
+    if (v == null) return '';
+    if (typeof v === 'string') return v;
+    if (typeof v === 'object') return v.name || v.fullName || '';
+    return String(v);
+  };
+
+  const templateData = {
+    type: d.type || d.kind || 'security_incident',
+    createdAt: typeof d.createdAt === 'string'
+      ? d.createdAt
+      : (d.createdAt?.toDate?.()?.toISOString?.() || new Date().toISOString()),
+    gate: d.gate || d.terminalId || d.source || '',
+    chaperoneName: d.chaperoneName || pick(d.chaperone) || pick(d.target),
+    studentName: pick(d.student),
+    notes: d.notes || d.summary || '',
+    eventId: d.eventId || incidentId,
+    confidence: typeof d.confidence === 'number' ? d.confidence : null,
+    livenessScore: typeof d.livenessScore === 'number' ? d.livenessScore : null,
+  };
+
+  // Deterministic job IDs (create(), not set) so retried triggers can't double-send
+  const results = await Promise.allSettled(SECURITY_ALERT_RECIPIENTS.map((to) =>
+    enqueueEmail(db, `sec-alert-${tenantId}-${incidentId}-${to.replace(/[^a-z0-9]/gi, '_')}`, {
+      to,
+      templateType: TEMPLATE_PICKUP_SECURITY_INCIDENT,
+      tenantId,
+      recordId: incidentId,
+      source: 'security_incident_alert',
+      templateData,
+    })
+  ));
+  const queued = results.filter((r) => r.status === 'fulfilled').length;
+  logger.info('Security incident alert queued', { tenantId, incidentId, type: templateData.type, queued });
 });
