@@ -31,6 +31,19 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// Text-only BINUS SPIRIT footer — no images/logo by design.
+// Keep in sync with web-dataset-collector/lib/email-templates.js (SPIRIT_FOOTER_HTML).
+const SPIRIT_FOOTER_HTML = `
+        <tr><td style="background:#F9FAFB;border-top:1px solid #E5E7EB;padding:20px 28px;text-align:center;">
+          <div style="font-size:11px;letter-spacing:4px;text-transform:uppercase;color:#0F2A4D;font-weight:700;">Binus Spirit</div>
+          <div style="margin-top:8px;font-size:12px;color:#4B5563;line-height:1.9;">
+            <strong style="color:#0F2A4D;">S</strong>triving for Excellence&nbsp;&nbsp;&middot;&nbsp;&nbsp;<strong style="color:#0F2A4D;">P</strong>erseverance&nbsp;&nbsp;&middot;&nbsp;&nbsp;<strong style="color:#0F2A4D;">I</strong>ntegrity<br>
+            <strong style="color:#0F2A4D;">R</strong>espect&nbsp;&nbsp;&middot;&nbsp;&nbsp;<strong style="color:#0F2A4D;">I</strong>nnovation&nbsp;&nbsp;&middot;&nbsp;&nbsp;<strong style="color:#0F2A4D;">T</strong>eamwork
+          </div>
+          <div style="margin-top:10px;font-size:11px;color:#6B7280;font-style:italic;">People &nbsp;&middot;&nbsp; Innovation &nbsp;&middot;&nbsp; Excellence</div>
+          <div style="margin-top:12px;font-size:11px;color:#6B7280;">BINUS Simprug &middot; Pickup System &middot; This is an automated message</div>
+        </td></tr>`;
+
 function renderPickupOnboardingConfirmationEmail(data) {
   const guardianName = String(data?.guardianName || '').trim() || 'Parent/Guardian';
   const guardianEmail = String(data?.guardianEmail || '').trim();
@@ -156,7 +169,7 @@ function renderPickupOnboardingConfirmationEmail(data) {
               </div>
             </td></tr>
           </table>
-        </td></tr>
+        </td></tr>${SPIRIT_FOOTER_HTML}
       </table>
     </td></tr>
   </table>
@@ -304,7 +317,7 @@ function renderPickupOnboardingApprovedEmail(data) {
               </div>
             </td></tr>
           </table>
-        </td></tr>
+        </td></tr>${SPIRIT_FOOTER_HTML}
       </table>
     </td></tr>
   </table>
@@ -420,7 +433,7 @@ function renderPickupOnboardingRejectedEmail(data) {
               </div>
             </td></tr>
           </table>
-        </td></tr>
+        </td></tr>${SPIRIT_FOOTER_HTML}
       </table>
     </td></tr>
   </table>
@@ -482,7 +495,7 @@ function renderPickupBulkCampaignEmail(data) {
         <tr><td style="padding:28px;">
           <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">${safeGreeting}</p>
           <p style="margin:0;font-size:14px;line-height:1.8;color:#374151;">${safeMessage}</p>
-        </td></tr>
+        </td></tr>${SPIRIT_FOOTER_HTML}
       </table>
     </td></tr>
   </table>
