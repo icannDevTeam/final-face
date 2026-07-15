@@ -11,6 +11,7 @@ const QUEUE_COLLECTION = 'email_queue';
 const TEMPLATE_PICKUP_ONBOARDING = 'pickup_onboarding_confirmation';
 const TEMPLATE_PICKUP_ONBOARDING_APPROVED = 'pickup_onboarding_approved';
 const TEMPLATE_PICKUP_ONBOARDING_REJECTED = 'pickup_onboarding_rejected';
+const TEMPLATE_PICKUP_ONBOARDING_CHANGES_REQUESTED = 'pickup_onboarding_changes_requested';
 const TEMPLATE_PICKUP_BULK_CAMPAIGN = 'pickup_bulk_campaign';
 const TEMPLATE_PICKUP_INVITE_LINK = 'pickup_invite_link';
 const TEMPLATE_PICKUP_WEEKLY_REPORT = 'pickup_weekly_report';
@@ -18,12 +19,45 @@ const TEMPLATE_PICKUP_SECURITY_INCIDENT = 'pickup_security_incident';
 
 const DEFAULT_TENANT_ID = 'binus-simprug';
 const WEEKLY_REPORT_RECIPIENTS = ['via@binus.edu'];
-const SECURITY_ALERT_RECIPIENTS = ['albert.arthur@binus.edu', 'johnchandra@binus.edu'];
+const SECURITY_ALERT_RECIPIENTS = ['albertarthursub@gmail.com', 'johnchandra@binus.edu'];
 
 const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 const INVITE_FROM_EMAIL = defineSecret('INVITE_FROM_EMAIL');
 const INVITE_FROM_NAME = defineSecret('INVITE_FROM_NAME');
 const INVITE_REPLY_TO = defineSecret('INVITE_REPLY_TO');
+
+function parseBool(value, fallback = false) {
+  if (value == null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
+function shouldSendSecurityIncidentEmail(incident = {}) {
+  const metadata = incident.metadata || {};
+  const source = String(incident.source || '').toLowerCase();
+  const kind = String(incident.kind || '').toLowerCase();
+  const service = String(incident.service || '').toLowerCase();
+
+  if (source === 'watchdog_cron' || String(metadata.generatedBy || '').toLowerCase() === 'run-watchdog-health') {
+    return false;
+  }
+
+  if (source === 'watchdog_cron') {
+    // Watchdog writes this explicit marker to control email fanout.
+    if (metadata.alertEmail === false) return false;
+
+    // Recovery notifications are off by default to reduce noise.
+    if (kind === 'recovery' && !parseBool(process.env.WATCHDOG_NOTIFY_RECOVERY_EMAILS, false)) {
+      return false;
+    }
+
+    // Avoid secondary alert loops from queue failures unless explicitly enabled.
+    if (service === 'email_queue' && !parseBool(process.env.WATCHDOG_NOTIFY_EMAIL_QUEUE_EMAILS, false)) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 function isEmailLike(value) {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(value || '').trim());
@@ -475,6 +509,117 @@ function renderPickupOnboardingRejectedEmail(data) {
   return { subject, html, text };
 }
 
+function renderPickupOnboardingChangesRequestedEmail(data) {
+  const guardianName = String(data?.guardianName || '').trim() || 'Parent/Guardian';
+  const formNumber = String(data?.formNumber || '').trim() || '—';
+  const requestedAt = String(data?.requestedAt || '').trim();
+  const requestedBy = String(data?.requestedBy || '').trim() || 'ACOP Team';
+  const message = String(data?.message || '').trim() || 'Please contact ACOP for details.';
+  const contactEmail = String(data?.contactEmail || '').trim() || 'inquiries.simprug@binus.edu';
+  const students = Array.isArray(data?.students) ? data.students : [];
+
+  const requestedLabel = requestedAt
+    ? new Date(requestedAt).toLocaleString('id-ID', {
+        timeZone: 'Asia/Jakarta',
+        dateStyle: 'long',
+        timeStyle: 'short',
+      })
+    : '-';
+
+  const safeName = escapeHtml(guardianName);
+  const safeForm = escapeHtml(formNumber);
+  const safeRequestedAt = escapeHtml(requestedLabel);
+  const safeRequestedBy = escapeHtml(requestedBy);
+  const safeMessage = escapeHtml(message).replace(/\n/g, '<br>');
+  const safeContactEmail = escapeHtml(contactEmail);
+
+  const studentRows = students.length
+    ? `<ul style="margin:6px 0 0;padding-left:20px;">${students.map((s) => {
+      const name = escapeHtml(s?.name || '-');
+      const grade = escapeHtml(s?.gradeSelection || '-');
+      const homeroom = escapeHtml(s?.homeroom || '-');
+      return `<li style="font-size:14px;line-height:1.8;"><strong>${name}</strong> · Grade ${grade} · Homeroom ${homeroom}</li>`;
+    }).join('')}</ul>`
+    : '<p style="margin:6px 0 0;font-size:14px;line-height:1.6;color:#4B5563;">No student details provided.</p>';
+
+  const subject = `Action needed on your pickup form: ${formNumber}`;
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#F9FAFB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;background:#F9FAFB;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
+        <tr><td style="background:#0F2A4D;color:#fff;padding:24px 28px;">
+          <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#FFC107;font-weight:700;">BINUS Simprug</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">Your pickup form needs a small update</div>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">Hi <strong>${safeName}</strong>,</p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#4B5563;">Good news — your form is still in review, no need to fill it in again. We just need one thing from you:</p>
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 16px;">
+            <tr><td style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:10px;padding:14px 16px;">
+              <div style="font-size:12px;color:#78350F;line-height:1.8;">
+                <strong>Form:</strong> ${safeForm}<br>
+                <strong>Requested:</strong> ${safeRequestedAt} WIB<br>
+                <strong>By:</strong> ${safeRequestedBy}
+              </div>
+              <div style="margin-top:10px;font-size:14px;color:#78350F;line-height:1.6;">
+                <strong>Message from ACOP:</strong><br>${safeMessage}
+              </div>
+            </td></tr>
+          </table>
+
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;">Children in this submission:</p>
+          ${studentRows}
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 0;">
+            <tr><td style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px 14px;">
+              <div style="font-size:13px;line-height:1.6;color:#1E40AF;">
+                Simply <strong>reply to this email</strong> with the requested photo or details, or send them via WhatsApp
+                to the ACOP team. You can also email
+                <a href="mailto:${safeContactEmail}" style="color:#1D4ED8;">${safeContactEmail}</a>.
+                Please mention form number <strong>${safeForm}</strong>. We'll update your form for you — no need to re-submit.
+              </div>
+            </td></tr>
+          </table>
+        </td></tr>${SPIRIT_FOOTER_HTML}
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  const studentText = students.length
+    ? students.map((s, idx) => `  ${idx + 1}. ${s?.name || '-'} | Grade ${s?.gradeSelection || '-'} | Homeroom ${s?.homeroom || '-'}`).join('\n')
+    : '  (none)';
+
+  const text = [
+    `Hi ${guardianName},`,
+    '',
+    'Good news — your pickup form is still in review, no need to fill it in again.',
+    'We just need one thing from you.',
+    '',
+    `Form number : ${formNumber}`,
+    `Requested   : ${requestedLabel} WIB`,
+    `By          : ${requestedBy}`,
+    '',
+    'Message from ACOP:',
+    message,
+    '',
+    'Children in this submission:',
+    studentText,
+    '',
+    'Simply reply to this email with the requested photo or details, or send them',
+    `via WhatsApp to the ACOP team. You can also email ${contactEmail}.`,
+    `Please mention form number ${formNumber}. We'll update your form for you — no need to re-submit.`,
+    '',
+    '- BINUS Simprug Pickup System',
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
 function renderPickupBulkCampaignEmail(data) {
   const subject = String(data?.subject || '').trim() || 'Pickup notice';
   const recipientName = String(data?.recipientName || '').trim() || 'Parent/Guardian';
@@ -766,6 +911,9 @@ function buildTemplate(templateType, templateData) {
   if (templateType === TEMPLATE_PICKUP_ONBOARDING_REJECTED) {
     return renderPickupOnboardingRejectedEmail(templateData || {});
   }
+  if (templateType === TEMPLATE_PICKUP_ONBOARDING_CHANGES_REQUESTED) {
+    return renderPickupOnboardingChangesRequestedEmail(templateData || {});
+  }
   if (templateType === TEMPLATE_PICKUP_BULK_CAMPAIGN) {
     return renderPickupBulkCampaignEmail(templateData || {});
   }
@@ -847,7 +995,9 @@ exports.processEmailQueue = onDocumentCreated({
 
   const fromEmail = String(INVITE_FROM_EMAIL.value() || '').trim() || 'onboarding@resend.dev';
   const fromName = String(INVITE_FROM_NAME.value() || '').trim() || 'BINUS Simprug Pickup';
-  const replyToRaw = String(INVITE_REPLY_TO.value() || '').trim();
+  // Per-job replyTo (e.g. ACOP follow-up emails) wins over the global secret.
+  const jobReplyTo = String(data.replyTo || '').trim();
+  const replyToRaw = isEmailLike(jobReplyTo) ? jobReplyTo : String(INVITE_REPLY_TO.value() || '').trim();
   const includeReplyTo = isEmailLike(replyToRaw);
 
   const nextRetryCount = Number(data.retryCount || 0) + 1;
@@ -1010,6 +1160,17 @@ exports.securityIncidentAlert = onDocumentCreated({
   const db = admin.firestore();
   const { tenantId, incidentId } = event.params;
   const d = snap.data() || {};
+
+  if (!shouldSendSecurityIncidentEmail(d)) {
+    logger.info('Security incident email suppressed by policy', {
+      tenantId,
+      incidentId,
+      kind: d.kind || d.type || null,
+      source: d.source || null,
+      service: d.service || null,
+    });
+    return;
+  }
 
   const pick = (v) => {
     if (v == null) return '';
