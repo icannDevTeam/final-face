@@ -968,6 +968,11 @@ def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
                 jpeg_bytes = part[hdr_end + sep_len:].rstrip(b"\r\n-") if hdr_end > 0 else b""
                 if pending_event is not None and jpeg_bytes:
                     pending_event["_jpeg"] = jpeg_bytes
+                    # Flush immediately — we now have both the JSON and the JPEG.
+                    # No need to wait for the next event or the 1.5 s timeout.
+                    yield from _emit_event(pending_event, name_map, logged_today, today)
+                    today = pending_event.get("_today", today)
+                    pending_event = None
                 continue
 
             if "json" not in content_type:

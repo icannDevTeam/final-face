@@ -67,6 +67,12 @@ _post_write_pool = _futures.ThreadPoolExecutor(
     max_workers=4, thread_name_prefix="pickup-postwrite"
 )
 
+# Distance above which the software FR audit marks an event as suspicious.
+# face_recognition distances: ~0.0 (identical) → ~0.6 (threshold) → 1.0+ (different).
+# 0.55 is intentionally tighter than the library default (0.6) so borderline
+# matches surface for human review without blocking legitimate scans.
+_SW_FR_FLAG_THRESHOLD = float(os.environ.get("SW_FR_FLAG_THRESHOLD", "0.55"))
+
 
 def _now() -> datetime:
     return datetime.now(WIB)
@@ -797,6 +803,67 @@ def record_pickup_event(
             _publish_socket(doc, gate=gate)
         except Exception:
             pass
+
+        # 5. Software-side FR confidence audit.
+        # Hikvision tells us the terminal identified employeeNo, but gives no
+        # confidence score. We download the enrolled photo + the capture JPEG
+        # and run an independent face_recognition distance check. Results are
+        # written back to fr.software* — they never block the pickup flow.
+        # Only runs for "ok" events with an enrolled photo and a capture frame.
+        enrolled_photo_path = (
+            chap_summary.get("photoUrl")
+            if isinstance(chap_summary, dict) else None
+        )
+        if decision == "ok" and jpeg_bytes and enrolled_photo_path:
+            try:
+                import io as _io
+                import face_recognition as _fr_lib
+                from firebase_admin import storage as _fr_storage
+
+                bucket_name = os.getenv(
+                    "FIREBASE_STORAGE_BUCKET",
+                    "facial-attendance-binus.firebasestorage.app",
+                )
+                _fr_bucket = _fr_storage.bucket(bucket_name)
+
+                # Download enrolled photo.
+                if enrolled_photo_path.startswith("http"):
+                    import requests as _req
+                    r = _req.get(enrolled_photo_path, timeout=10)
+                    r.raise_for_status()
+                    enrolled_bytes = r.content
+                else:
+                    enrolled_bytes = _fr_bucket.blob(enrolled_photo_path).download_as_bytes()
+
+                enrolled_img = _fr_lib.load_image_file(_io.BytesIO(enrolled_bytes))
+                capture_img  = _fr_lib.load_image_file(_io.BytesIO(jpeg_bytes))
+                enrolled_encs = _fr_lib.face_encodings(enrolled_img)
+                capture_encs  = _fr_lib.face_encodings(capture_img)
+
+                if enrolled_encs and capture_encs:
+                    dist = float(_fr_lib.face_distance(enrolled_encs, capture_encs[0])[0])
+                    sw_conf = max(0.0, 1.0 - dist)  # 0–1 (1 = identical)
+                    sw_flagged = dist > _SW_FR_FLAG_THRESHOLD
+                    db.document(
+                        f"{tenancy.pickup_events_path(tid)}/{event_id}"
+                    ).update({
+                        "fr.softwareDistance":   dist,
+                        "fr.softwareConfidence": sw_conf,
+                        "fr.softwareFlagged":    sw_flagged,
+                        "fr.softwareCheckedAt":  _now().isoformat(),
+                    })
+                    if sw_flagged:
+                        print(f"  ⚠ [FR-audit] FLAGGED {chap_summary.get('name')} "
+                              f"dist={dist:.3f} threshold={_SW_FR_FLAG_THRESHOLD}")
+                else:
+                    db.document(
+                        f"{tenancy.pickup_events_path(tid)}/{event_id}"
+                    ).update({
+                        "fr.softwareCheckedAt": _now().isoformat(),
+                        "fr.softwareError": "no_face_detected",
+                    })
+            except Exception as _fr_err:
+                print(f"  ⚠ FR software audit failed for {event_id}: {_fr_err}")
 
     _post_write_pool.submit(_post_write)
 
