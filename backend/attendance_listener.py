@@ -57,10 +57,14 @@ load_dotenv()
 HIKVISION_IP   = os.getenv("HIKVISION_IP", "10.26.30.200")
 HIKVISION_USER = os.getenv("HIKVISION_USER", "admin")
 HIKVISION_PASS = os.getenv("HIKVISION_PASS")
-HIKVISION_DEVICE_NAME = os.getenv("HIKVISION_DEVICE_NAME", HIKVISION_IP)
+_HIKVISION_DEVICE_NAME_ENV = os.getenv("HIKVISION_DEVICE_NAME")
+_HIKVISION_TERMINAL_ID_ENV = os.getenv("HIKVISION_TERMINAL_ID")
+HIKVISION_DEVICE_NAME = _HIKVISION_DEVICE_NAME_ENV or HIKVISION_IP
 # Stable terminalId derived from the device name (matches
 # web-dataset-collector/pages/api/pickup/admin/terminals.js stableTerminalId).
-HIKVISION_TERMINAL_ID = hashlib.sha1(HIKVISION_DEVICE_NAME.encode("utf-8")).hexdigest()[:12]
+HIKVISION_TERMINAL_ID = _HIKVISION_TERMINAL_ID_ENV or (
+    hashlib.sha1(HIKVISION_DEVICE_NAME.encode("utf-8")).hexdigest()[:12]
+)
 if not HIKVISION_PASS:
     raise SystemExit("FATAL: HIKVISION_PASS environment variable is required")
 
@@ -145,6 +149,71 @@ def invalidate_challenge():
 
 _firestore_client = None
 
+
+def _is_app_label(name: str) -> bool:
+    n = (name or "").strip()
+    return n.startswith("Grade ") or n.startswith("EY")
+
+
+def _resolve_terminal_identity(db):
+    """Align this listener's terminal name/id to the app registry by IP.
+
+    This prevents legacy names in local config (e.g. old lobby/tower labels)
+    from diverging from the labels used by web/iPad apps.
+    """
+    global HIKVISION_DEVICE_NAME, HIKVISION_TERMINAL_ID
+    tid = tenancy.get_tenant_id()
+    try:
+        docs = list(
+            db.collection(tenancy.terminals_path(tid))
+            .where("ip", "==", HIKVISION_IP)
+            .limit(10)
+            .stream()
+        )
+    except Exception as e:
+        print(f"  ⚠ Terminal identity lookup failed: {e}")
+        return
+
+    if not docs:
+        return
+
+    chosen = None
+    if _HIKVISION_TERMINAL_ID_ENV:
+        chosen = next((d for d in docs if d.id == _HIKVISION_TERMINAL_ID_ENV), None)
+    if chosen is None and _HIKVISION_DEVICE_NAME_ENV:
+        chosen = next(
+            (d for d in docs if (d.to_dict() or {}).get("name") == _HIKVISION_DEVICE_NAME_ENV),
+            None,
+        )
+    if chosen is None and len(docs) == 1:
+        chosen = docs[0]
+    if chosen is None:
+        def _score(doc):
+            data = doc.to_dict() or {}
+            name = str(data.get("name") or "")
+            score = 0
+            if data.get("enabled", True):
+                score += 4
+            if _is_app_label(name):
+                score += 6
+            if "Lobby" in name or "Tower" in name:
+                score -= 1
+            return score
+
+        docs.sort(key=_score, reverse=True)
+        chosen = docs[0]
+
+    data = chosen.to_dict() or {}
+    resolved_name = (data.get("name") or "").strip()
+    resolved_id = chosen.id
+
+    if resolved_name and not _HIKVISION_DEVICE_NAME_ENV:
+        HIKVISION_DEVICE_NAME = resolved_name
+    if resolved_id and not _HIKVISION_TERMINAL_ID_ENV:
+        HIKVISION_TERMINAL_ID = resolved_id
+
+    print(f"  ✓ Terminal identity: {HIKVISION_DEVICE_NAME} ({HIKVISION_TERMINAL_ID})")
+
 def get_firestore():
     global _firestore_client
     if _firestore_client is not None:
@@ -165,6 +234,8 @@ def get_firestore():
 
         _firestore_client = firestore.client()
         print("  ✓ Firebase Firestore connected")
+        # Align local listener identity with app-facing terminal registry.
+        _resolve_terminal_identity(_firestore_client)
         # Phase 2: upsert devices.json into the Firestore terminals registry
         # so the Next.js admin sees this terminal immediately.
         try:

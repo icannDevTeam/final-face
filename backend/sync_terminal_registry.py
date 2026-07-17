@@ -30,6 +30,47 @@ def stable_terminal_id(name: str) -> str:
     return hashlib.sha1((name or "").encode("utf-8")).hexdigest()[:12]
 
 
+def _is_app_label(name: str) -> bool:
+    n = (name or "").strip()
+    return n.startswith("Grade ") or n.startswith("EY")
+
+
+def _find_existing_by_ip(db, tid: str, ip: str):
+    """Return best existing terminal doc for this IP, if any.
+
+    We prefer app-facing labels (Grade/EY) and enabled docs to avoid
+    re-introducing legacy names from devices.json.
+    """
+    if not ip:
+        return None
+    try:
+        docs = list(
+            db.collection(tenancy.terminals_path(tid))
+            .where("ip", "==", ip)
+            .limit(10)
+            .stream()
+        )
+    except Exception:
+        return None
+    if not docs:
+        return None
+
+    def _score(doc):
+        d = doc.to_dict() or {}
+        name = str(d.get("name") or "")
+        score = 0
+        if d.get("enabled", True):
+            score += 4
+        if _is_app_label(name):
+            score += 6
+        if "Lobby" in name or "Tower" in name:
+            score -= 1
+        return score
+
+    docs.sort(key=_score, reverse=True)
+    return docs[0]
+
+
 def _load_devices_file(path: Optional[Path] = None) -> list[dict]:
     p = path or DEVICES_FILE
     if not p.exists():
@@ -61,14 +102,28 @@ def sync_terminal_registry(tenant_id: Optional[str] = None) -> int:
             continue
         ip = (d.get("ip") or "").strip() or None
         enabled = bool(d.get("enabled", True))
-        terminal_id = stable_terminal_id(name)
-        ref = db.document(f"{tenancy.terminals_path(tid)}/{terminal_id}")
-        existing = ref.get()
+
+        # Canonical source of truth is the app registry in Firestore.
+        # If an entry already exists for this IP, preserve its id + label.
+        by_ip = _find_existing_by_ip(db, tid, ip or "")
+        if by_ip is not None:
+            ref = by_ip.reference
+            existing = by_ip
+            terminal_id = by_ip.id
+            existing_data = by_ip.to_dict() or {}
+        else:
+            terminal_id = stable_terminal_id(name)
+            ref = db.document(f"{tenancy.terminals_path(tid)}/{terminal_id}")
+            existing = ref.get()
+            existing_data = existing.to_dict() if existing.exists else {}
+
+        canonical_name = (existing_data.get("name") or name).strip()
+        canonical_device_name = (existing_data.get("deviceName") or canonical_name).strip()
         patch = {
             "terminalId": terminal_id,
-            "name": name,
+            "name": canonical_name,
             "ip": ip,
-            "deviceName": name,
+            "deviceName": canonical_device_name,
             "enabled": enabled,
             "lastSeenAt": now,
             "updatedAt": now,

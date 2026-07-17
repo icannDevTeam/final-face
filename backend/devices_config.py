@@ -23,16 +23,31 @@ DEVICES_FILE = SCRIPT_DIR / "devices.json"
 DEVICES_LOCAL_FILE = SCRIPT_DIR / "devices.local.json"
 
 
-def _load_local_overrides() -> dict[str, dict]:
-    """Read devices.local.json (gitignored) and return name → device dict."""
+def _load_local_overrides() -> list[dict]:
+    """Read devices.local.json (gitignored)."""
     if not DEVICES_LOCAL_FILE.exists():
-        return {}
+        return []
     try:
         data = json.loads(DEVICES_LOCAL_FILE.read_text())
-        return {d["name"]: d for d in data if isinstance(d, dict) and "name" in d}
+        return [d for d in data if isinstance(d, dict)]
     except Exception as e:
         print(f"⚠️  Failed to read {DEVICES_LOCAL_FILE.name}: {e}", file=sys.stderr)
-        return {}
+        return []
+
+
+def _pick_override(device: dict, overrides: list[dict]) -> dict | None:
+    """Match local override by exact name first, then by IP fallback."""
+    name = str(device.get("name") or "").strip()
+    ip = str(device.get("ip") or "").strip()
+
+    for o in overrides:
+        if str(o.get("name") or "").strip() == name:
+            return o
+    if ip:
+        for o in overrides:
+            if str(o.get("ip") or "").strip() == ip:
+                return o
+    return None
 
 
 def _resolve_password(device: dict, override: dict | None) -> str | None:
@@ -87,7 +102,7 @@ def load_devices(filter_substr: str | None = None, only_enabled: bool = True) ->
             continue
         if only_enabled and not d.get("enabled", True):
             continue
-        ov = overrides.get(d.get("name", ""))
+        ov = _pick_override(d, overrides)
         password = _resolve_password(d, ov)
         if not password:
             print(
