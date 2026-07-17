@@ -27,7 +27,7 @@ Usage:
   python3 sync_terminals.py --date 2026-04-25 --date 2026-04-26
   python3 sync_terminals.py --no-firebase      # Local JSON only
   python3 sync_terminals.py --dry-run          # Show what would run
-  python3 sync_terminals.py --device "MYP Tower"  # Substring match, single device
+    python3 sync_terminals.py --device "Terminal 7"  # Substring match, single device
 """
 
 import argparse

@@ -22,6 +22,10 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+import tenancy
 from devices_config import load_devices as _load_devices_resolved
 
 WIB = timezone(timedelta(hours=7))
@@ -52,6 +56,7 @@ class DeviceListener:
         self.name = device["name"]
         self.ip = device["ip"]
         self.password = device["password"]
+        self.terminal_id = device.get("terminalId")
         self.index = index
         self.color = COLORS[index % len(COLORS)]
         self.extra_args = extra_args
@@ -71,6 +76,8 @@ class DeviceListener:
         env["HIKVISION_IP"] = self.ip
         env["HIKVISION_PASS"] = self.password
         env["HIKVISION_DEVICE_NAME"] = self.name
+        if self.terminal_id:
+            env["HIKVISION_TERMINAL_ID"] = self.terminal_id
         env["PYTHONUNBUFFERED"] = "1"
 
         cmd = [sys.executable, str(LISTENER_SCRIPT)] + self.extra_args
@@ -116,14 +123,184 @@ class DeviceListener:
         self.start()
 
 
-def load_devices() -> list[dict]:
-    """Load enabled devices with passwords resolved from env/devices.local.json."""
-    enabled = _load_devices_resolved()
-    if not enabled:
+def _load_enabled_from_devices_file() -> list[dict]:
+    """Load enabled devices directly from devices.json (raw, without password resolution)."""
+    if not DEVICES_FILE.exists():
+        print(f"✗ {DEVICES_FILE} not found")
+        sys.exit(1)
+    try:
+        raw = json.loads(DEVICES_FILE.read_text())
+    except Exception as e:
+        print(f"✗ Failed to read {DEVICES_FILE.name}: {e}")
+        sys.exit(1)
+    return [d for d in raw if isinstance(d, dict) and d.get("enabled", True)]
+
+
+def _init_firestore_client():
+    """Initialize Firebase Admin and return Firestore client, or None."""
+    try:
+        if not firebase_admin._apps:
+            cred_path = os.getenv(
+                "FIREBASE_CREDENTIALS",
+                str(SCRIPT_DIR / "facial-attendance-binus-firebase-adminsdk.json"),
+            )
+            firebase_admin.initialize_app(credentials.Certificate(cred_path))
+        return firestore.client()
+    except Exception as e:
+        print(f"⚠ Firestore init failed: {e}")
+        return None
+
+
+def _load_terminals_from_firestore() -> list[dict]:
+    """Load enabled terminals from Firestore tenant registry."""
+    db = _init_firestore_client()
+    if db is None:
+        return []
+
+    tid = tenancy.get_tenant_id()
+    col = db.collection(tenancy.terminals_path(tid))
+    try:
+        # Prefer new filter API to avoid positional-arg warning.
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        docs = list(col.where(filter=FieldFilter("enabled", "==", True)).stream())
+    except Exception:
+        docs = list(col.where("enabled", "==", True).stream())
+
+    terminals = []
+    for doc in docs:
+        d = doc.to_dict() or {}
+        ip = str(d.get("ip") or "").strip()
+        name = str(d.get("name") or d.get("deviceName") or doc.id).strip()
+        if not ip:
+            continue
+        terminals.append(
+            {
+                "terminalId": doc.id,
+                "name": name,
+                "ip": ip,
+                "enabled": d.get("enabled", True),
+            }
+        )
+
+    terminals.sort(key=lambda d: d.get("name", ""))
+    return terminals
+
+
+def _resolve_password_for_terminal(term: dict, resolved_local: list[dict]) -> str | None:
+    """Resolve password for a Firestore terminal using local/env credential sources."""
+    t_name = str(term.get("name") or "").strip()
+    t_ip = str(term.get("ip") or "").strip()
+
+    # 1) exact name match in resolved local config
+    by_name = next((d for d in resolved_local if str(d.get("name") or "").strip() == t_name), None)
+    if by_name and by_name.get("password"):
+        return by_name["password"]
+
+    # 2) exact IP match in resolved local config
+    by_ip = next((d for d in resolved_local if str(d.get("ip") or "").strip() == t_ip), None)
+    if by_ip and by_ip.get("password"):
+        return by_ip["password"]
+
+    # 3) generic env fallback (shared device password setups)
+    env_pw = os.getenv("HIKVISION_PASS")
+    if env_pw:
+        return env_pw
+
+    # 4) if all local entries share one password, reuse it
+    pw_set = {str(d.get("password")) for d in resolved_local if d.get("password")}
+    if len(pw_set) == 1:
+        return pw_set.pop()
+
+    return None
+
+
+def _build_devices_from_firestore(allow_partial: bool = False) -> tuple[list[dict], list[dict]]:
+    """Build listener launch list from Firestore terminals + locally resolved credentials."""
+    fs_terms = _load_terminals_from_firestore()
+    if not fs_terms:
+        return [], []
+
+    # Single-password mode: one shared secret for all Hikvision terminals.
+    # Useful when terminal names are renamed in Firestore and local per-name
+    # overrides lag behind.
+    shared_pw = os.getenv("HIKVISION_PASS")
+    if shared_pw:
+        devices = [
+            {
+                "terminalId": t.get("terminalId"),
+                "name": t["name"],
+                "ip": t["ip"],
+                "password": shared_pw,
+                "enabled": True,
+            }
+            for t in fs_terms
+        ]
+        return devices, []
+
+    resolved_local = _load_devices_resolved()
+    devices: list[dict] = []
+    unresolved: list[dict] = []
+
+    for t in fs_terms:
+        pw = _resolve_password_for_terminal(t, resolved_local)
+        if not pw:
+            unresolved.append(t)
+            continue
+        devices.append(
+            {
+                "terminalId": t.get("terminalId"),
+                "name": t["name"],
+                "ip": t["ip"],
+                "password": pw,
+                "enabled": True,
+            }
+        )
+
+    if unresolved and not allow_partial:
+        print("✗ Coverage check failed: some Firestore terminals have no resolved password.")
+        print("  Refusing to start partially. Resolve credentials first or use --allow-partial.")
+        for d in unresolved:
+            print(f"    - {d.get('name', '?')} ({d.get('ip', '?')})")
+        sys.exit(1)
+
+    if unresolved and allow_partial:
+        print("⚠ Partial coverage: starting only Firestore terminals with resolved credentials.")
+        for d in unresolved:
+            print(f"    - Skipped: {d.get('name', '?')} ({d.get('ip', '?')})")
+
+    return devices, unresolved
+
+
+def load_devices(allow_partial: bool = False) -> tuple[list[dict], list[dict]]:
+    """Load enabled devices with passwords resolved; Firestore is source of truth."""
+    devices_fs, unresolved_fs = _build_devices_from_firestore(allow_partial=allow_partial)
+    if devices_fs:
+        return devices_fs, unresolved_fs
+
+    print("⚠ No Firestore terminals available; falling back to backend/devices.json")
+    enabled_raw = _load_enabled_from_devices_file()
+    resolved = _load_devices_resolved()
+    if not resolved:
         print("✗ No enabled devices with resolvable passwords. "
               "Check devices.json + devices.local.json / env vars.")
         sys.exit(1)
-    return enabled
+
+    resolved_names = {str(d.get("name", "")).strip() for d in resolved}
+    unresolved = [d for d in enabled_raw if str(d.get("name", "")).strip() not in resolved_names]
+
+    if unresolved and not allow_partial:
+        print("✗ Coverage check failed: some enabled terminals have no resolved password.")
+        print("  Refusing to start partially. Resolve credentials first or use --allow-partial.")
+        for d in unresolved:
+            print(f"    - {d.get('name', '?')} ({d.get('ip', '?')})")
+        sys.exit(1)
+
+    if unresolved and allow_partial:
+        print("⚠ Partial coverage: starting listeners only for terminals with resolved credentials.")
+        for d in unresolved:
+            print(f"    - Skipped: {d.get('name', '?')} ({d.get('ip', '?')})")
+
+    return resolved, unresolved
 
 
 def print_status(listeners: list[DeviceListener]):
@@ -167,20 +344,22 @@ def main():
     parser = argparse.ArgumentParser(description="Multi-device Hikvision listener manager")
     parser.add_argument("--no-firebase", action="store_true", help="Disable Firebase for all listeners")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be launched")
+    parser.add_argument("--allow-partial", action="store_true", help="Allow startup even when some enabled terminals have unresolved credentials")
     args = parser.parse_args()
 
     extra_args = []
     if args.no_firebase:
         extra_args.append("--no-firebase")
 
-    devices = load_devices()
+    devices, unresolved = load_devices(allow_partial=args.allow_partial)
+    expected = len(devices) + len(unresolved)
 
     print(f"\n{BOLD}╔══════════════════════════════════════════════════════════╗{RESET}")
     print(f"{BOLD}║       Hikvision Multi-Device Listener Manager           ║{RESET}")
     print(f"{BOLD}╚══════════════════════════════════════════════════════════╝{RESET}\n")
-    print(f"  Devices:  {len(devices)} enabled")
+    print(f"  Devices:  {len(devices)}/{expected} enabled terminals covered")
     print(f"  Firebase: {'disabled' if args.no_firebase else 'enabled'}")
-    print(f"  Config:   {DEVICES_FILE}")
+    print(f"  Source:   Firestore terminals registry (fallback: {DEVICES_FILE.name})")
     print()
 
     if args.dry_run:

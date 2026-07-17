@@ -76,6 +76,7 @@ DUPLICATE_WINDOW = 28800  # 8 hours — one-time attendance per session
 WIB = timezone(timedelta(hours=7))  # UTC+7
 
 USE_FIREBASE = True
+PICKUP_ONLY = os.getenv("PICKUP_ONLY", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 # ─── Manual HTTP Digest Auth ─────────────────────────────────────────────────
 
@@ -152,7 +153,7 @@ _firestore_client = None
 
 def _is_app_label(name: str) -> bool:
     n = (name or "").strip()
-    return n.startswith("Grade ") or n.startswith("EY")
+    return n.startswith("Terminal ") or n.startswith("Grade ") or n.startswith("EY")
 
 
 def _resolve_terminal_identity(db):
@@ -164,12 +165,13 @@ def _resolve_terminal_identity(db):
     global HIKVISION_DEVICE_NAME, HIKVISION_TERMINAL_ID
     tid = tenancy.get_tenant_id()
     try:
-        docs = list(
-            db.collection(tenancy.terminals_path(tid))
-            .where("ip", "==", HIKVISION_IP)
-            .limit(10)
-            .stream()
-        )
+        col = db.collection(tenancy.terminals_path(tid))
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            q = col.where(filter=FieldFilter("ip", "==", HIKVISION_IP))
+        except Exception:
+            q = col.where("ip", "==", HIKVISION_IP)
+        docs = list(q.limit(10).stream())
     except Exception as e:
         print(f"  ⚠ Terminal identity lookup failed: {e}")
         return
@@ -236,15 +238,18 @@ def get_firestore():
         print("  ✓ Firebase Firestore connected")
         # Align local listener identity with app-facing terminal registry.
         _resolve_terminal_identity(_firestore_client)
-        # Phase 2: upsert devices.json into the Firestore terminals registry
-        # so the Next.js admin sees this terminal immediately.
-        try:
-            from sync_terminal_registry import sync_terminal_registry
-            n = sync_terminal_registry()
-            if n:
-                print(f"  ✓ Terminal registry synced ({n} entries)")
-        except Exception as _sync_e:
-            print(f"  ⚠ Terminal registry sync skipped: {_sync_e}")
+        # Optional bootstrap: upsert local devices.json into Firestore.
+        # Disabled by default because Firestore is now the source of truth.
+        if str(os.getenv("SYNC_TERMINAL_REGISTRY_ON_START", "0")).lower() in {"1", "true", "yes", "on"}:
+            try:
+                from sync_terminal_registry import sync_terminal_registry
+                n = sync_terminal_registry()
+                if n:
+                    print(f"  ✓ Terminal registry synced ({n} entries)")
+            except Exception as _sync_e:
+                print(f"  ⚠ Terminal registry sync skipped: {_sync_e}")
+        else:
+            print("  ℹ️  Terminal registry sync from devices.json is disabled (Firestore is source of truth)")
         # Pre-warm the pickup hot-path caches + start real-time invalidation
         # so the first scan of the day is already warm (~50ms not ~250ms).
         try:
@@ -991,7 +996,7 @@ def mark_binus_pushed(emp_no: str, date_str: str):
 
 # ─── Event stream parser ─────────────────────────────────────────────────────
 
-def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
+def parse_event_stream(resp, name_map: dict, logged_today: set, today: str, pickup_only: bool = PICKUP_ONLY):
     """
     Parse multipart MIME event stream from the device.
     Yields tuples for each new attendance.
@@ -1041,7 +1046,7 @@ def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
                     pending_event["_jpeg"] = jpeg_bytes
                     # Flush immediately — we now have both the JSON and the JPEG.
                     # No need to wait for the next event or the 1.5 s timeout.
-                    yield from _emit_event(pending_event, name_map, logged_today, today)
+                    yield from _emit_event(pending_event, name_map, logged_today, today, pickup_only=pickup_only)
                     today = pending_event.get("_today", today)
                     pending_event = None
                 continue
@@ -1056,7 +1061,7 @@ def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
 
             # If we had a pending event without a JPEG, flush it now
             if pending_event is not None:
-                yield from _emit_event(pending_event, name_map, logged_today, today)
+                yield from _emit_event(pending_event, name_map, logged_today, today, pickup_only=pickup_only)
                 today = pending_event.get("_today", today)
                 pending_event = None
 
@@ -1101,12 +1106,12 @@ def parse_event_stream(resp, name_map: dict, logged_today: set, today: str):
             if "_seen_at" not in pending_event:
                 pending_event["_seen_at"] = time.time()
             elif time.time() - t0 > 1.5:
-                yield from _emit_event(pending_event, name_map, logged_today, today)
+                yield from _emit_event(pending_event, name_map, logged_today, today, pickup_only=pickup_only)
                 today = pending_event.get("_today", today)
                 pending_event = None
 
 
-def _emit_event(pending: dict, name_map: dict, logged_today: dict, today: str):
+def _emit_event(pending: dict, name_map: dict, logged_today: dict, today: str, pickup_only: bool = PICKUP_ONLY):
     """Convert a buffered ACE event (+ optional JPEG) into a yieldable tuple."""
     ace = pending["ace"]
     emp_no = ace.get("employeeNoString", "") or str(ace.get("employeeNo", ""))
@@ -1140,6 +1145,10 @@ def _emit_event(pending: dict, name_map: dict, logged_today: dict, today: str):
     # parent doing two pickups in a day still produces two cards.
     is_chaperone = tenancy.is_chaperone_employee_no(real_emp_no) or \
                    tenancy.is_chaperone_employee_no(emp_no)
+
+    # Pickup-first runtime: ignore all non-chaperone scans.
+    if pickup_only and not is_chaperone:
+        return
 
     if not is_chaperone:
         already_logged = False
@@ -1193,7 +1202,8 @@ def run_listener(use_firebase=True):
     print(f"  Late after: {CUTOFF_HOUR:02d}:{CUTOFF_MINUTE:02d}")
     print(f"  Data dir:  {DATA_DIR}")
     print(f"  Firebase:  {'enabled' if use_firebase else 'disabled'}")
-    print(f"  Binus API: {'enabled' if API_INTEGRATE_ENABLED else 'disabled'}")
+    print(f"  Mode:      {'pickup-only' if PICKUP_ONLY else 'attendance+pickup'}")
+    print(f"  Binus API: {'disabled (pickup-only mode)' if PICKUP_ONLY else ('enabled' if API_INTEGRATE_ENABLED else 'disabled')}")
     print()
 
     # Build name lookup
@@ -1204,23 +1214,24 @@ def run_listener(use_firebase=True):
         print(f"   • {name} (ID: {eno})")
     print()
 
-    # Load student metadata mapping (employeeNo → BINUS IDs)
-    student_meta = {}
-    if METADATA_ENABLED:
-        print("📝 Loading student metadata mapping...")
-        student_meta = student_metadata.load_from_firebase()
-        if student_meta:
-            mapped = sum(1 for v in student_meta.values() if v.get("idStudent"))
-            print(f"   {len(student_meta)} student(s) in metadata, {mapped} with BINUS IDs")
-            unmapped = [v.get('name', '?') for v in student_meta.values() if not v.get('idStudent')]
-            if unmapped:
-                print(f"   ⚠ Missing BINUS IDs: {', '.join(unmapped[:5])}{'...' if len(unmapped) > 5 else ''}")
+    if not PICKUP_ONLY:
+        # Load student metadata mapping (employeeNo → BINUS IDs)
+        student_meta = {}
+        if METADATA_ENABLED:
+            print("📝 Loading student metadata mapping...")
+            student_meta = student_metadata.load_from_firebase()
+            if student_meta:
+                mapped = sum(1 for v in student_meta.values() if v.get("idStudent"))
+                print(f"   {len(student_meta)} student(s) in metadata, {mapped} with BINUS IDs")
+                unmapped = [v.get('name', '?') for v in student_meta.values() if not v.get('idStudent')]
+                if unmapped:
+                    print(f"   ⚠ Missing BINUS IDs: {', '.join(unmapped[:5])}{'...' if len(unmapped) > 5 else ''}")
+            else:
+                print("   ⚠ No student metadata found. BINUS API uploads will be skipped.")
+                print("     → Run enrollment (hikvision_attendance.py enroll-live/enroll-class) to populate.")
         else:
-            print("   ⚠ No student metadata found. BINUS API uploads will be skipped.")
-            print("     → Run enrollment (hikvision_attendance.py enroll-live/enroll-class) to populate.")
-    else:
-        print("⚠ Student metadata module not available — BINUS API uploads disabled.")
-    print()
+            print("⚠ Student metadata module not available — BINUS API uploads disabled.")
+        print()
 
     if use_firebase:
         get_firestore()
@@ -1242,16 +1253,22 @@ def run_listener(use_firebase=True):
 
     while True:
         try:
-            # ── Catch-up sync on (re)connect ──────────────────────────
-            if first_connect:
-                print("📡 Running catch-up sync for missed events...")
-            else:
-                print("📡 Reconnected — running catch-up sync...")
+            # ── Catch-up sync on (re)connect (attendance mode only) ──
+            if not PICKUP_ONLY:
+                if first_connect:
+                    print("📡 Running catch-up sync for missed events...")
+                else:
+                    print("📡 Reconnected — running catch-up sync...")
 
-            # Refresh today in case of date rollover during downtime
-            today = datetime.now(WIB).strftime("%Y-%m-%d")
-            caught = catchup_sync(name_map, logged_today, today, use_firebase)
-            count += caught
+                # Refresh today in case of date rollover during downtime
+                today = datetime.now(WIB).strftime("%Y-%m-%d")
+                caught = catchup_sync(name_map, logged_today, today, use_firebase)
+                count += caught
+            else:
+                if first_connect:
+                    print("📡 Pickup-only mode: catch-up attendance sync is disabled")
+                else:
+                    print("📡 Reconnected (pickup-only mode)")
             first_connect = False
 
             print(f"🔗 Connecting to event stream...")
@@ -1291,7 +1308,7 @@ def run_listener(use_firebase=True):
             retry_delay = 5  # reset on success
 
             for name, emp_no, scanned_emp_no, timestamp, status, date_str, jpeg_bytes in parse_event_stream(
-                resp, name_map, logged_today, today
+                resp, name_map, logged_today, today, pickup_only=PICKUP_ONLY
             ):
                 today = date_str
                 count += 1
@@ -1318,6 +1335,9 @@ def run_listener(use_firebase=True):
                         print(f"🟦 PICKUP (firebase disabled) [{timestamp}] {name}")
                     continue
 
+                if PICKUP_ONLY:
+                    continue
+
                 # ── Normal attendance flow ───────────────────────────
                 is_late = status == "Late"
                 icon = "⏰" if is_late else "✅"
@@ -1338,7 +1358,10 @@ def run_listener(use_firebase=True):
             time.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, 60)
         except KeyboardInterrupt:
-            print(f"\n\n⏹  Stopped. {count} attendance record(s) logged today.")
+            if PICKUP_ONLY:
+                print(f"\n\n⏹  Stopped. {count} pickup event(s) processed.")
+            else:
+                print(f"\n\n⏹  Stopped. {count} attendance record(s) logged today.")
             sys.exit(0)
         except Exception as e:
             print(f"\n⚠ Error: {e} — retrying in {retry_delay}s...")

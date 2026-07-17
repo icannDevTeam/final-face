@@ -32,7 +32,7 @@ def stable_terminal_id(name: str) -> str:
 
 def _is_app_label(name: str) -> bool:
     n = (name or "").strip()
-    return n.startswith("Grade ") or n.startswith("EY")
+    return n.startswith("Terminal ") or n.startswith("Grade ") or n.startswith("EY")
 
 
 def _find_existing_by_ip(db, tid: str, ip: str):
@@ -44,12 +44,13 @@ def _find_existing_by_ip(db, tid: str, ip: str):
     if not ip:
         return None
     try:
-        docs = list(
-            db.collection(tenancy.terminals_path(tid))
-            .where("ip", "==", ip)
-            .limit(10)
-            .stream()
-        )
+        col = db.collection(tenancy.terminals_path(tid))
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            q = col.where(filter=FieldFilter("ip", "==", ip))
+        except Exception:
+            q = col.where("ip", "==", ip)
+        docs = list(q.limit(10).stream())
     except Exception:
         return None
     if not docs:
