@@ -105,13 +105,18 @@ def _get_db():
 
 
 _terminal_group_cache: dict[str, tuple[float, Optional[str]]] = {}
-_TERMINAL_CACHE_TTL = 60.0
+# Keep pairing resolution fresh: a just-paired/re-paired iPad should stop
+# dropping cards after the next scan, not after a minute-old cache expires.
+_TERMINAL_CACHE_TTL = 5.0
 
 
 def _resolve_release_group_id(db, tid: str, terminal_id: Optional[str]) -> Optional[str]:
-    """Lookup tenants/{t}/terminals/{terminalId}.releaseGroupId, with a 60s cache.
+    """Lookup the release group paired to a terminal, with a 60s cache.
 
-    Returns None when terminal_id is missing or has no group binding yet.
+    The admin pairing model may store the binding either on the terminal doc
+    (`terminals/{terminalId}.releaseGroupId`) or on release group docs
+    (`release_groups/{groupId}.terminalIds`). Check both so iPad group feeds do
+    not drop live pickup events after their Firestore refresh.
     """
     if not terminal_id or not db:
         return None
@@ -125,7 +130,51 @@ def _resolve_release_group_id(db, tid: str, terminal_id: Optional[str]) -> Optio
         rg = (snap.to_dict() or {}).get("releaseGroupId") if snap.exists else None
     except Exception:
         rg = None
-    _terminal_group_cache[key] = (_time.time(), rg)
+    if not rg:
+        try:
+            try:
+                from google.cloud.firestore_v1.base_query import FieldFilter
+                docs = (db.collection(tenancy.release_groups_path(tid))
+                          .where(filter=FieldFilter("terminalIds", "array_contains", terminal_id))
+                          .limit(1)
+                          .stream())
+            except Exception:
+                docs = (db.collection(tenancy.release_groups_path(tid))
+                          .where("terminalIds", "array_contains", terminal_id)
+                          .limit(1)
+                          .stream())
+            for doc in docs:
+                rg = doc.id
+                break
+        except Exception:
+            rg = None
+    if not rg:
+        try:
+            for doc in db.collection(tenancy.release_groups_path(tid)).stream():
+                data = doc.to_dict() or {}
+                terminal_ids = data.get("terminalIds") or data.get("terminals") or []
+                if isinstance(terminal_ids, str):
+                    terminal_ids = [terminal_ids]
+                normalized = []
+                for item in terminal_ids:
+                    if isinstance(item, str):
+                        normalized.append(item)
+                    elif isinstance(item, dict):
+                        value = item.get("terminalId") or item.get("id")
+                        if value:
+                            normalized.append(str(value))
+                if terminal_id in normalized or data.get("terminalId") == terminal_id:
+                    rg = doc.id
+                    break
+        except Exception:
+            rg = None
+    # Cache positive bindings only. During live setup, admins may pair a
+    # terminal while the listener is already running; caching None would keep
+    # writing pickup_events without releaseGroupId until the TTL expires.
+    if rg:
+        _terminal_group_cache[key] = (_time.time(), rg)
+    else:
+        _terminal_group_cache.pop(key, None)
     return rg
 
 
@@ -275,18 +324,45 @@ def _terminal_grade_scopes(db, tid: str, terminal_id: Optional[str]) -> list[str
     return []
 
 
-def _student_grade(student: dict) -> Optional[str]:
-    """Pull leading digits from homeroom (e.g. '5C' → '5', '4A' → '4')."""
-    hr = (student or {}).get("homeroom") or ""
+def _student_grade_tokens(student: dict) -> set[str]:
+    """Extract scope-match tokens from homeroom/class fields.
+
+    Examples:
+      5C   -> {"5"}
+      EY1  -> {"EY1", "EY"}
+      EY2A -> {"EY2", "EY"}
+    """
+    hr = (student or {}).get("homeroom") or (student or {}).get("className") or ""
     if not hr:
-        return None
+        return set()
+
+    raw = str(hr).strip().upper()
+    if not raw:
+        return set()
+
+    # Numeric primary-school style homerooms: "5C", "4A" -> "5", "4"
     digits = ""
-    for ch in str(hr):
+    for ch in raw:
         if ch.isdigit():
             digits += ch
         else:
             break
-    return digits or None
+    if digits:
+        return {digits}
+
+    # Early Years style homerooms: "EY1", "EY2A" -> "EY1"/"EY2" + broad "EY"
+    if raw.startswith("EY"):
+        ey_token = "EY"
+        for ch in raw[2:]:
+            if ch.isdigit():
+                ey_token += ch
+            else:
+                break
+        if ey_token == "EY":
+            return {"EY"}
+        return {ey_token, "EY"}
+
+    return set()
 
 
 def _resolve_chaperone(db, tid: str, employee_no: str) -> Optional[dict]:
@@ -611,8 +687,11 @@ def record_pickup_event(
     if decision == "ok" and students:
         scopes = _terminal_grade_scopes(db, tid, terminal_id)
         if scopes:
-            student_grades = {g for g in (_student_grade(s) for s in students) if g}
-            if student_grades and not (student_grades & set(scopes)):
+            normalized_scopes = {str(s).strip().upper() for s in scopes if str(s).strip()}
+            student_grades: set[str] = set()
+            for s in students:
+                student_grades.update(_student_grade_tokens(s))
+            if student_grades and not (student_grades & normalized_scopes):
                 decision = "wrong_terminal"
 
     # ── Cooldown + window guards ─────────────────────────────────────────
@@ -669,6 +748,11 @@ def record_pickup_event(
     else:
         card_state = "green"
 
+    # The iPad feed refreshes from Firestore after the socket push. Demo rows
+    # have status='pending'; real rows need the same active status or they can
+    # appear briefly from SSE and disappear on the next filtered poll.
+    status = "hidden" if card_state == "silent" else "pending"
+
     event_id = uuid.uuid4().hex
     now_iso = now_dt.isoformat()
 
@@ -690,6 +774,10 @@ def record_pickup_event(
         except Exception:
             capture_path = None
 
+    release_group_id = _resolve_release_group_id(db, tid, terminal_id)
+    if status == "pending" and not release_group_id:
+        print(f"  ⚠ Pickup event has no releaseGroupId — iPad group feed may hide it ({device_name}, terminalId={terminal_id})")
+
     doc = {
         "eventId": event_id,
         "tenantId": tid,
@@ -699,11 +787,12 @@ def record_pickup_event(
         "deviceName": device_name,
         "gate": gate or device_name,
         "terminalId": terminal_id,
-        "releaseGroupId": _resolve_release_group_id(db, tid, terminal_id),
+        "releaseGroupId": release_group_id,
         "chaperone": chap_summary,
         "students": students,
         "decision": decision,
         "cardState": card_state,
+        "status": status,
         "capturePath": capture_path,
         "officerOverride": None,    # set later if officer page approves
         "overrideCode": override_code,

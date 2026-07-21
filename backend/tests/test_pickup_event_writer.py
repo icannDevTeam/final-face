@@ -86,6 +86,50 @@ class FakeDB:
         return _Empty()
 
 
+class _Snap:
+    def __init__(self, doc_id, data=None, exists=True):
+        self.id = doc_id
+        self._data = data or {}
+        self.exists = exists
+
+    def to_dict(self):
+        return dict(self._data)
+
+
+class _Query:
+    def __init__(self, docs):
+        self._docs = docs
+
+    def where(self, *args, **kwargs):
+        return self
+
+    def limit(self, *_args, **_kwargs):
+        return self
+
+    def stream(self):
+        return iter(self._docs)
+
+
+class PairingDB:
+    def __init__(self, release_group_docs=None):
+        self.terminal_snap = _Snap("term-g5", {}, exists=True)
+        self.release_group_docs = [
+            _Snap("rg-grade-5", {"terminalIds": ["term-g5"], "tabletDeviceId": "ipad-grade-5"}),
+        ] if release_group_docs is None else release_group_docs
+
+    def document(self, _path: str):
+        class _Doc:
+            def __init__(self, snap):
+                self._snap = snap
+
+            def get(self):
+                return self._snap
+        return _Doc(self.terminal_snap)
+
+    def collection(self, _path: str):
+        return _Query(self.release_group_docs)
+
+
 class PickupEventWriterTests(unittest.TestCase):
     """Each test gets a clean cache + fake DB + patched lookups."""
 
@@ -191,6 +235,7 @@ class PickupEventWriterTests(unittest.TestCase):
         doc = self._written_event()
         self.assertEqual(doc["decision"], "ok")
         self.assertEqual(doc["cardState"], "green")
+        self.assertEqual(doc["status"], "pending")
         self.assertEqual(doc["holdSeconds"], 45)
         self.assertEqual(doc["chaperone"]["id"], "chap-9001")
         self.assertEqual(len(doc["students"]), 1)
@@ -207,6 +252,7 @@ class PickupEventWriterTests(unittest.TestCase):
         doc = self._written_event()
         self.assertEqual(doc["decision"], "unknown_chaperone")
         self.assertEqual(doc["cardState"], "silent")
+        self.assertEqual(doc["status"], "hidden")
         self.assertEqual(doc["chaperone"]["id"], None)
         self.assertIn("Unknown", doc["chaperone"]["name"])
         self.assertIn("9999", doc["chaperone"]["name"])
@@ -228,6 +274,7 @@ class PickupEventWriterTests(unittest.TestCase):
         doc = self._written_event()
         self.assertEqual(doc["decision"], "suspended")
         self.assertEqual(doc["cardState"], "red")
+        self.assertEqual(doc["status"], "pending")
         self.assertTrue(doc["chaperone"]["suspended"])
         self.assertIsNotNone(doc["overrideCode"])
 
@@ -264,6 +311,7 @@ class PickupEventWriterTests(unittest.TestCase):
         doc = self._written_event()
         self.assertEqual(doc["decision"], "wrong_terminal")
         self.assertEqual(doc["cardState"], "silent")
+        self.assertEqual(doc["status"], "hidden")
 
     # ── 5b. Terminal with matching grade scope still goes green ─────────
     def test_grade_scope_match_passes_through(self):
@@ -279,6 +327,51 @@ class PickupEventWriterTests(unittest.TestCase):
         doc = (self._record(employee_no="9005"), self._written_event())[1]
         self.assertEqual(doc["decision"], "ok")
         self.assertEqual(doc["cardState"], "green")
+
+    def test_ey_scope_matches_ey_homeroom(self):
+        self._stub_lookups(
+            chaperone={
+                "_id": "chap-9010", "name": "EY Parent",
+                "facePaths": [], "authorizedStudentIds": ["s1"],
+            },
+            students=[{"id": "s1", "name": "EY Kid", "homeroom": "EY1"}],
+            grade_scopes=["EY"],
+            settings={"cooldownSeconds": 0},
+        )
+        doc = (self._record(employee_no="9010"), self._written_event())[1]
+        self.assertEqual(doc["decision"], "ok")
+        self.assertEqual(doc["cardState"], "green")
+
+    def test_ey_scope_matches_exact_ey1_scope(self):
+        self._stub_lookups(
+            chaperone={
+                "_id": "chap-9011", "name": "EY Parent Exact",
+                "facePaths": [], "authorizedStudentIds": ["s1"],
+            },
+            students=[{"id": "s1", "name": "EY Kid", "homeroom": "EY1"}],
+            grade_scopes=["EY1"],
+            settings={"cooldownSeconds": 0},
+        )
+        doc = (self._record(employee_no="9011"), self._written_event())[1]
+        self.assertEqual(doc["decision"], "ok")
+        self.assertEqual(doc["cardState"], "green")
+
+    def test_release_group_resolves_from_release_group_terminal_ids(self):
+        pew._terminal_group_cache.clear()
+        self.assertEqual(
+            pew._resolve_release_group_id(PairingDB(), "binus-simprug", "term-g5"),
+            "rg-grade-5",
+        )
+
+    def test_missing_release_group_is_not_cached(self):
+        pew._terminal_group_cache.clear()
+        self.assertIsNone(
+            pew._resolve_release_group_id(PairingDB(release_group_docs=[]), "binus-simprug", "term-g5")
+        )
+        self.assertNotIn("binus-simprug|term-g5", pew._terminal_group_cache)
+
+    def test_release_group_cache_ttl_is_short_for_admin_pairing_changes(self):
+        self.assertLessEqual(pew._TERMINAL_CACHE_TTL, 5.0)
 
     # ── 6. Outside-window → info card ───────────────────────────────────
     def test_outside_window_emits_info_card(self):
