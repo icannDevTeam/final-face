@@ -35,13 +35,22 @@ def _load_local_overrides() -> list[dict]:
         return []
 
 
+def _normalize_device_name(value: object) -> str:
+    """Normalize terminal labels so Terminal 01 matches Terminal 1 overrides."""
+    raw = str(value or "").strip().lower()
+    parts = raw.split()
+    if len(parts) == 2 and parts[0] == "terminal" and parts[1].isdigit():
+        return f"terminal {int(parts[1])}"
+    return raw
+
+
 def _pick_override(device: dict, overrides: list[dict]) -> dict | None:
     """Match local override by exact name first, then by IP fallback."""
-    name = str(device.get("name") or "").strip()
+    name = _normalize_device_name(device.get("name"))
     ip = str(device.get("ip") or "").strip()
 
     for o in overrides:
-        if str(o.get("name") or "").strip() == name:
+        if _normalize_device_name(o.get("name")) == name:
             return o
     if ip:
         for o in overrides:

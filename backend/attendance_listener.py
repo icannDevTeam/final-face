@@ -77,6 +77,7 @@ WIB = timezone(timedelta(hours=7))  # UTC+7
 
 USE_FIREBASE = True
 PICKUP_ONLY = os.getenv("PICKUP_ONLY", "true").strip().lower() in {"1", "true", "yes", "on"}
+PICKUP_JPEG_FALLBACK = os.getenv("PICKUP_JPEG_FALLBACK", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 # ─── Manual HTTP Digest Auth ─────────────────────────────────────────────────
 
@@ -859,6 +860,57 @@ def _save_unknown_snapshot(
     )
 
 
+def _capture_face_fallback_bytes(timeout_sec: int = 3) -> bytes | None:
+    """Best-effort on-demand face capture when alertStream has no JPEG part.
+
+    This keeps Pickup cards visual even when a terminal emits JSON-only events.
+    """
+    xml_body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<CaptureFaceDataCond xmlns="http://www.isapi.org/ver20/XMLSchema" version="2.0">'
+        '<captureInfrared>false</captureInfrared>'
+        '<dataType>binary</dataType>'
+        '</CaptureFaceDataCond>'
+    )
+    try:
+        challenge = get_digest_challenge()
+        uri = "/ISAPI/AccessControl/CaptureFaceData"
+        auth_header = build_digest_auth("POST", uri, challenge)
+        r = requests.post(
+            f"http://{HIKVISION_IP}{uri}",
+            data=xml_body,
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/xml",
+            },
+            timeout=timeout_sec,
+        )
+        if r.status_code == 401:
+            invalidate_challenge()
+            challenge = get_digest_challenge()
+            auth_header = build_digest_auth("POST", uri, challenge)
+            r = requests.post(
+                f"http://{HIKVISION_IP}{uri}",
+                data=xml_body,
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/xml",
+                },
+                timeout=timeout_sec,
+            )
+        if r.status_code != 200:
+            return None
+
+        content = r.content or b""
+        start = content.find(b"\xff\xd8")
+        end = content.rfind(b"\xff\xd9")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        return content[start:end + 2]
+    except Exception:
+        return None
+
+
 # ─── Attendance storage ──────────────────────────────────────────────────────
 
 def determine_status(dt: datetime) -> str:
@@ -1319,6 +1371,12 @@ def run_listener(use_firebase=True):
                    tenancy.is_chaperone_employee_no(scanned_emp_no):
                     if use_firebase:
                         try:
+                            jpeg_for_pickup = jpeg_bytes
+                            if jpeg_for_pickup is None and PICKUP_JPEG_FALLBACK:
+                                jpeg_for_pickup = _capture_face_fallback_bytes(timeout_sec=3)
+                                if jpeg_for_pickup:
+                                    print("  📸 Pickup JPEG fallback capture succeeded")
+
                             pickup_event_writer.record_pickup_event(
                                 tenant_id=tenancy.get_tenant_id(),
                                 employee_no=emp_no,
@@ -1327,7 +1385,7 @@ def run_listener(use_firebase=True):
                                 device_name=HIKVISION_DEVICE_NAME,
                                 gate=HIKVISION_DEVICE_NAME,
                                 terminal_id=HIKVISION_TERMINAL_ID,
-                                jpeg_bytes=jpeg_bytes,
+                                jpeg_bytes=jpeg_for_pickup,
                             )
                         except Exception as e:
                             print(f"  ⚠ Pickup event handler failed: {e}")
