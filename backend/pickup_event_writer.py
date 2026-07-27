@@ -200,7 +200,7 @@ def _get_pickup_settings(tid: str) -> dict:
 # events always reach staff.
 _recent_scan_cache: dict[str, float] = {}  # key=tid|empNo|terminalId → epoch sec
 _recent_terminal_scan: dict[str, float] = {}  # key=tid|terminalId → epoch sec (any parent)
-_RECENT_LOCAL_TTL = 1200.0                 # cache 20 min in-process (> cooldownSeconds=600)
+_RECENT_LOCAL_TTL = 60.0 * 10              # 10-min system cooldown (== cooldownSeconds=600)
 
 
 def _hhmm_to_minutes(s: Optional[str]) -> Optional[int]:
