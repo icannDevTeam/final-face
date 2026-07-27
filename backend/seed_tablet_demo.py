@@ -3,7 +3,7 @@
 Seed iPad Teacher (Grades 4-5) pickup_events for the demo.
 
 Writes events the iPad feed renders:
-  - status='pending' (Active card slots) × 6
+  - status='pending' (Active card slots) × 14
   - status='held'    (Held rail)         × 8
 Spread across the Grade 5A / 4A / 4B terminals in release group
 VF5ZcEkhBtVoJUyIwzCg (the group the paired "GRADE 5 iPad" is bound to).
@@ -13,6 +13,8 @@ uploaded once to Storage (cycled across chaperones).
 
 Usage:
   python3 seed_tablet_demo.py                 # clear old + write demo events
+  python3 seed_tablet_demo.py --preview       # route events to the isolated
+                                              #   preview-demo group/terminal
   python3 seed_tablet_demo.py --clear-only    # remove any prior demo events
 """
 from __future__ import annotations
@@ -168,10 +170,19 @@ def clear_demo(db, tid):
 
 
 def main():
+    global RELEASE_GROUP_ID
     ap = argparse.ArgumentParser()
     ap.add_argument("--tenant", default=tenancy.get_tenant_id())
     ap.add_argument("--clear-only", action="store_true")
+    ap.add_argument("--preview", action="store_true",
+                    help="Route all events to the preview-demo release group "
+                         "and terminal (never shows on real iPads)")
     args = ap.parse_args()
+
+    if args.preview:
+        RELEASE_GROUP_ID = "preview-demo"
+        for k in TERMINALS:
+            TERMINALS[k] = ("preview-demo-terminal", "Preview Demo Terminal")
 
     db = init_db()
     tid = args.tenant
@@ -210,12 +221,20 @@ def main():
 
     # ── ACTIVE pickups (status='pending') ──
     actives = [
-        (10,  "Ibu Sari Wijaya",   "Mother",      "5",  1),
-        (38,  "Pak Hadi Kusuma",   "Father",      "5",  2),
-        (72,  "Bu Maya Tanjung",   "Mother",      "4A", 1),
-        (108, "Pak Dimas Halim",   "Father",      "4B", 3),
-        (150, "Oma Ratna Sari",    "Grandmother", "4C", 1),
-        (185, "Pak Agus Pranata",  "Driver",      "5",  2),
+        (10,  "Ibu Sari Wijaya",    "Mother",      "5",  1),
+        (38,  "Pak Hadi Kusuma",    "Father",      "5",  2),
+        (72,  "Bu Maya Tanjung",    "Mother",      "4A", 1),
+        (108, "Pak Dimas Halim",    "Father",      "4B", 3),
+        (150, "Oma Ratna Sari",     "Grandmother", "4C", 1),
+        (185, "Pak Agus Pranata",   "Driver",      "5",  2),
+        (210, "Bu Dewi Santoso",    "Mother",      "4A", 2),
+        (238, "Pak Rudi Wibowo",    "Father",      "4B", 1),
+        (265, "Opa Hendra Gunawan", "Grandfather", "5",  1),
+        (290, "Bu Fitri Anggraini", "Mother",      "4C", 2),
+        (318, "Pak Yanto Salim",    "Driver",      "4A", 1),
+        (342, "Bu Nina Hartanto",   "Mother",      "4B", 2),
+        (370, "Pak Iwan Cahyono",   "Father",      "5",  1),
+        (395, "Oma Lestari Wijaya", "Grandmother", "4A", 1),
     ]
     for i, (secs, name, rel, tkey, n) in enumerate(actives):
         e, _ = make_event(

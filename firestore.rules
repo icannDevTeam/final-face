@@ -192,8 +192,11 @@ service cloud.firestore {
       // service-account-issued anonymous session whose token carries
       // tenantId + role:'pickup-display'.
       match /chaperones/{chaperoneId} {
-        allow read: if isTenantAdmin(tid)
+        allow get: if isTenantAdmin(tid)
           || (isTenantMember(tid) && callerRole() == 'pickup-display');
+        allow list: if (isTenantAdmin(tid)
+          || (isTenantMember(tid) && callerRole() == 'pickup-display'))
+          && request.query.limit <= 100;
         allow write: if false;
         match /authorizedStudents/{sid} {
           allow read: if isTenantMember(tid);
@@ -207,7 +210,8 @@ service cloud.firestore {
         }
       }
       match /pickup_events/{eventId} {
-        allow read: if isTenantMember(tid);
+        allow get: if isTenantMember(tid);
+        allow list: if isTenantMember(tid) && request.query.limit <= 100;
         allow write: if false; // Listener (Admin SDK) only
       }
       match /pickup_overrides/{logId} {

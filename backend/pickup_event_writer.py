@@ -200,7 +200,7 @@ def _get_pickup_settings(tid: str) -> dict:
 # events always reach staff.
 _recent_scan_cache: dict[str, float] = {}  # key=tid|empNo|terminalId → epoch sec
 _recent_terminal_scan: dict[str, float] = {}  # key=tid|terminalId → epoch sec (any parent)
-_RECENT_LOCAL_TTL = 600.0                  # cache up to 10 min in-process
+_RECENT_LOCAL_TTL = 1200.0                 # cache 20 min in-process (> cooldownSeconds=600)
 
 
 def _hhmm_to_minutes(s: Optional[str]) -> Optional[int]:
@@ -699,7 +699,7 @@ def record_pickup_event(
     silent_decisions = {"unknown_chaperone", "wrong_terminal"}
     is_silent = decision in silent_decisions
     is_suspended = decision == "suspended"
-    cooldown_sec = int(settings.get("cooldownSeconds") or 300)
+    cooldown_sec = int(settings.get("cooldownSeconds") or 600)
     warmup_min = int(settings.get("warmupMinutes") or 30)
     enforce_window = bool(settings.get("enforceWindow", True))
     inter_parent_sec = float(settings.get("interParentSeconds") or 2)

@@ -28,7 +28,7 @@ DEFAULT_PICKUP_SETTINGS = {
     "requireLiveness": True,            # decision #1 — always on
     "requireOfficerConfirm": False,
     "pickupWindow": {"start": "14:00", "end": "17:30"},  # tenant-default; per-terminal overrides
-    "cooldownSeconds": 300,             # same chap@same terminal silently skipped within this window
+    "cooldownSeconds": 600,             # same chap@same terminal silently skipped within this window
     "warmupMinutes": 30,                # grace minutes BEFORE pickupWindow.start where scans still count
     "enforceWindow": True,              # outside window → recorded as audit-only 'outside_window'
     "interParentSeconds": 2,            # global per-terminal throttle between any two scans (anti-collision)
