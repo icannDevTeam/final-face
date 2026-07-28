@@ -1,91 +1,82 @@
 [
   {
     "terminalId": "472a2370ca48",
-    "name": "Terminal 1",
+    "name": "Terminal 01",
     "ip": "10.26.30.41",
     "password_env": "HIKVISION_PASS",
     "enabled": true,
-    "note": "Canonical terminal registry baseline (1/11)."
-  },
-  {
-    "terminalId": "df40d79a1e5b",
-    "name": "Terminal 2",
-    "ip": "10.26.80.20",
-    "password_env": "HIKVISION_PASS",
-    "enabled": true,
-    "note": "Canonical terminal registry baseline (2/11)."
-  },
-  {
-    "terminalId": "cf24a199e5b6",
-    "name": "Terminal 3",
-    "ip": "10.26.30.76",
-    "password_env": "HIKVISION_PASS",
-    "enabled": true,
-    "note": "Canonical terminal registry baseline (3/11)."
-  },
-  {
-    "terminalId": "5ecd40a48e49",
-    "name": "Terminal 4",
-    "ip": "10.26.30.81",
-    "password_env": "HIKVISION_PASS",
-    "enabled": true,
-    "note": "Canonical terminal registry baseline (4/11)."
-  },
-  {
-    "terminalId": "2556e271d5da",
-    "name": "Terminal 5",
-    "ip": "10.26.30.80",
-    "password_env": "HIKVISION_PASS",
-    "enabled": true,
-    "note": "Canonical terminal registry baseline (5/11)."
+    "note": "Synced from Firestore terminal registry 2026-07-28."
   },
   {
     "terminalId": "f462250f7ca3",
-    "name": "Terminal 6",
+    "name": "Terminal 02",
     "ip": "10.26.30.67",
     "password_env": "HIKVISION_PASS",
     "enabled": true,
-    "note": "Canonical terminal registry baseline (6/11)."
-  },
-  {
-    "terminalId": "ed53afa9b079",
-    "name": "Terminal 7",
-    "ip": "10.26.30.201",
-    "password_env": "HIKVISION_PASS",
-    "enabled": true,
-    "note": "Canonical terminal registry baseline (7/11)."
-  },
-  {
-    "terminalId": "c318f11f62be",
-    "name": "Terminal 8",
-    "ip": "10.26.30.75",
-    "password_env": "HIKVISION_PASS",
-    "enabled": true,
-    "note": "Canonical terminal registry baseline (8/11)."
+    "note": "Synced from Firestore terminal registry 2026-07-28."
   },
   {
     "terminalId": "455b597cf22f",
-    "name": "Terminal 9",
+    "name": "Terminal 03",
     "ip": "10.26.30.74",
     "password_env": "HIKVISION_PASS",
     "enabled": true,
-    "note": "Canonical terminal registry baseline (9/11)."
+    "note": "Synced from Firestore terminal registry 2026-07-28."
+  },
+  {
+    "terminalId": "c318f11f62be",
+    "name": "Terminal 04",
+    "ip": "10.26.30.75",
+    "password_env": "HIKVISION_PASS",
+    "enabled": true,
+    "note": "Synced from Firestore terminal registry 2026-07-28."
+  },
+  {
+    "terminalId": "cf24a199e5b6",
+    "name": "Terminal 05",
+    "ip": "10.26.30.76",
+    "password_env": "HIKVISION_PASS",
+    "enabled": true,
+    "note": "Synced from Firestore terminal registry 2026-07-28."
+  },
+  {
+    "terminalId": "ddbb94f15ae0",
+    "name": "Terminal 06",
+    "ip": "10.26.30.92",
+    "password_env": "HIKVISION_PASS",
+    "enabled": true,
+    "note": "Synced from Firestore terminal registry 2026-07-28."
+  },
+  {
+    "terminalId": "5ecd40a48e49",
+    "name": "Terminal 07",
+    "ip": "10.26.30.81",
+    "password_env": "HIKVISION_PASS",
+    "enabled": true,
+    "note": "Synced from Firestore terminal registry 2026-07-28."
   },
   {
     "terminalId": "0d847419cf16",
-    "name": "Terminal 10",
+    "name": "Terminal 08",
     "ip": "10.26.30.82",
     "password_env": "HIKVISION_PASS",
     "enabled": true,
-    "note": "Canonical terminal registry baseline (10/11)."
+    "note": "Synced from Firestore terminal registry 2026-07-28."
   },
   {
     "terminalId": "30754945c9eb",
-    "name": "Terminal 11",
+    "name": "Terminal 09",
     "ip": "10.26.30.83",
     "password_env": "HIKVISION_PASS",
     "enabled": true,
-    "note": "Canonical terminal registry baseline (11/11)."
+    "note": "Synced from Firestore terminal registry 2026-07-28."
+  },
+  {
+    "terminalId": "ed53afa9b079",
+    "name": "Terminal 10",
+    "ip": "10.26.30.201",
+    "password_env": "HIKVISION_PASS",
+    "enabled": true,
+    "note": "Synced from Firestore terminal registry 2026-07-28."
   }
 ]
-
