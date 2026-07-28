@@ -202,6 +202,62 @@ _recent_scan_cache: dict[str, float] = {}  # key=tid|empNo|terminalId → epoch 
 _recent_terminal_scan: dict[str, float] = {}  # key=tid|terminalId → epoch sec (any parent)
 _RECENT_LOCAL_TTL = 60.0 * 10              # 10-min system cooldown (== cooldownSeconds=600)
 
+# ─── Cross-terminal dedup ────────────────────────────────────────────────────
+# The pole terminals face the same walkway: a parent walking past can be
+# recognized by 3-6 devices within seconds, firing duplicate green cards on
+# several iPads. Each listener is a separate OS process, so in-memory caches
+# can't catch this — but all listeners run on one host, so a tiny flock'd
+# JSON file is the shared source of truth. Only decision == "ok" is deduped:
+# security decisions must always surface, and an earlier outside_window scan
+# must never suppress the later legitimate "ok".
+# Window: settings.crossTerminalCooldownSeconds (default = cooldownSeconds).
+import fcntl
+
+_XT_DEDUP_FILE = os.environ.get(
+    "PICKUP_XT_DEDUP_FILE", "/tmp/pickupguard_xt_dedup.json"
+)
+
+
+def _xt_check_and_mark(tid: str, employee_no: str,
+                       window_sec: float, now_ts: float) -> bool:
+    """Atomic check-and-set across listener processes.
+
+    Returns True if this chaperone already produced an 'ok' card at ANY
+    terminal within `window_sec` (caller should skip). Otherwise records
+    now_ts and returns False. We mark BEFORE the Firestore write so two
+    terminals scanning in the same second can't both pass. Fail-open on
+    any I/O error — a duplicate card beats a missing card.
+    """
+    if window_sec <= 0:
+        return False
+    key = f"{tid}|{employee_no}"
+    try:
+        fd = os.open(_XT_DEDUP_FILE, os.O_RDWR | os.O_CREAT, 0o666)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            raw = os.read(fd, 1 << 20).decode("utf-8", "replace")
+            try:
+                data = json.loads(raw) if raw.strip() else {}
+            except Exception:
+                data = {}
+            last = data.get(key)
+            if last and (now_ts - float(last)) < window_sec:
+                return True
+            # Prune stale entries, then record this scan.
+            data = {k: v for k, v in data.items()
+                    if now_ts - float(v) < window_sec}
+            data[key] = now_ts
+            payload = json.dumps(data, separators=(",", ":")).encode("utf-8")
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, 0)
+            os.write(fd, payload)
+            return False
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+    except Exception:
+        return False
+
 
 def _hhmm_to_minutes(s: Optional[str]) -> Optional[int]:
     if not s or not isinstance(s, str) or ":" not in s:
@@ -728,6 +784,20 @@ def record_pickup_event(
                 outside_window = True
                 decision = "outside_window"
                 card_state = "info"
+
+    # Cross-terminal dedup — one green card per parent per pickup pass.
+    # Poles all face the same walkway, so 3-6 terminals can recognize the
+    # same parent within seconds; only the FIRST terminal fires the card.
+    if decision == "ok":
+        xt_window = float(
+            settings.get("crossTerminalCooldownSeconds") or cooldown_sec
+        )
+        if _xt_check_and_mark(tid, employee_no, xt_window, now_dt.timestamp()):
+            _mark_recent(tid, employee_no, terminal_id, now_dt)
+            print(f"  ⏸  Cross-terminal dedup — {chap_summary['name']} @ "
+                  f"{device_name} (ok card already fired at another terminal "
+                  f"within {int(xt_window)}s) — skipped")
+            return None
 
     # Mark this scan as recent so the next one within cooldown is skipped.
     _mark_recent(tid, employee_no, terminal_id, now_dt)
