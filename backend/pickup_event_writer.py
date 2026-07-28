@@ -198,7 +198,7 @@ def _get_pickup_settings(tid: str) -> dict:
 # treated as a duplicate and silently skipped (no Firestore write, no iPad
 # card). Unknown / suspended chaperones bypass the cooldown so security
 # events always reach staff.
-_recent_scan_cache: dict[str, float] = {}  # key=tid|empNo|terminalId → epoch sec
+_recent_scan_cache: dict[str, tuple[float, str]] = {}  # key=tid|empNo|terminalId → (epoch sec, decision)
 _recent_terminal_scan: dict[str, float] = {}  # key=tid|terminalId → epoch sec (any parent)
 _RECENT_LOCAL_TTL = 60.0 * 10              # 10-min system cooldown (== cooldownSeconds=600)
 
@@ -302,29 +302,38 @@ def _in_window(now_dt: datetime, window: dict, warmup_min: int) -> bool:
 
 
 def _cooldown_active(db, tid: str, employee_no: str, terminal_id: Optional[str],
-                     cooldown_sec: int, now_dt: datetime) -> bool:
-    """Check in-process cache first, then Firestore for cross-process safety."""
+                     cooldown_sec: int, now_dt: datetime,
+                     ignore_outside_window: bool = False) -> bool:
+    """Check in-process cache first, then Firestore for cross-process safety.
+
+    With `ignore_outside_window=True` (used when the CURRENT scan would be a
+    real in-window "ok"), prior outside_window rows do not count — parents
+    habitually scan early, and that must never delay their real pickup.
+    """
     if cooldown_sec <= 0 or not terminal_id:
         return False
     import time as _time
     key = f"{tid}|{employee_no}|{terminal_id}"
-    last = _recent_scan_cache.get(key)
+    entry = _recent_scan_cache.get(key)  # (epoch_sec, decision)
     now_epoch = _time.time()
     # Drop very old cache entries
-    if last and now_epoch - last > _RECENT_LOCAL_TTL:
+    if entry and now_epoch - entry[0] > _RECENT_LOCAL_TTL:
         _recent_scan_cache.pop(key, None)
-        last = None
-    if last and (now_epoch - last) < cooldown_sec:
-        return True
-    # Cross-process: query Firestore for the latest event from this chap@terminal
+        entry = None
+    if entry and (now_epoch - entry[0]) < cooldown_sec:
+        if not (ignore_outside_window and entry[1] == "outside_window"):
+            return True
+    # Cross-process: query Firestore for the latest events from this chap@terminal
     try:
         q = (db.collection(tenancy.pickup_events_path(tid))
                .where("employeeNo", "==", employee_no)
                .where("terminalId", "==", terminal_id)
                .order_by("recordedAt", direction="DESCENDING")
-               .limit(1).stream())
+               .limit(3).stream())
         for s in q:
             d = s.to_dict() or {}
+            if ignore_outside_window and d.get("decision") == "outside_window":
+                continue
             ra = d.get("recordedAt")
             ts = None
             if hasattr(ra, "timestamp"):
@@ -335,7 +344,7 @@ def _cooldown_active(db, tid: str, employee_no: str, terminal_id: Optional[str],
                 except Exception:
                     ts = None
             if ts and (now_dt.timestamp() - ts) < cooldown_sec:
-                _recent_scan_cache[key] = ts
+                _recent_scan_cache[key] = (ts, d.get("decision") or "ok")
                 return True
     except Exception:
         # Missing composite index, etc — fail open (don't block legitimate scans)
@@ -343,11 +352,12 @@ def _cooldown_active(db, tid: str, employee_no: str, terminal_id: Optional[str],
     return False
 
 
-def _mark_recent(tid: str, employee_no: str, terminal_id: Optional[str], now_dt: datetime) -> None:
+def _mark_recent(tid: str, employee_no: str, terminal_id: Optional[str],
+                 now_dt: datetime, decision: str = "ok") -> None:
     if not terminal_id:
         return
     ts = now_dt.timestamp()
-    _recent_scan_cache[f"{tid}|{employee_no}|{terminal_id}"] = ts
+    _recent_scan_cache[f"{tid}|{employee_no}|{terminal_id}"] = (ts, decision)
     _recent_terminal_scan[f"{tid}|{terminal_id}"] = ts
 
 
@@ -773,17 +783,22 @@ def record_pickup_event(
     # Cooldown applies to silent + ok decisions to prevent log spam.
     # Suspended bypasses cooldown so security flags always reach staff.
     if not is_suspended:
-        if _cooldown_active(db, tid, employee_no, terminal_id, cooldown_sec, now_dt):
-            print(f"  ⏸  Pickup cooldown — {chap_summary['name']} @ {device_name} "
-                  f"(within {cooldown_sec}s) — skipped")
-            return None
-        # Window enforcement only for normal "ok" — silent decisions stay silent.
+        # Resolve the window FIRST so we know whether this scan would be a
+        # real "ok" card or an early outside_window audit row. Parents
+        # habitually scan before the warmup opens; those early rows must
+        # never start a cooldown that delays the real pickup.
         if decision == "ok" and enforce_window:
             window = _resolve_window(db, tid, terminal_id)
             if window and not _in_window(now_dt, window, warmup_min):
                 outside_window = True
                 decision = "outside_window"
-                card_state = "info"
+        # For an in-window "ok" scan, prior outside_window rows are ignored
+        # so the first scan after the window opens fires immediately.
+        if _cooldown_active(db, tid, employee_no, terminal_id, cooldown_sec,
+                            now_dt, ignore_outside_window=(decision == "ok")):
+            print(f"  ⏸  Pickup cooldown — {chap_summary['name']} @ {device_name} "
+                  f"(within {cooldown_sec}s) — skipped")
+            return None
 
     # Cross-terminal dedup — one green card per parent per pickup pass.
     # Poles all face the same walkway, so 3-6 terminals can recognize the
@@ -793,14 +808,14 @@ def record_pickup_event(
             settings.get("crossTerminalCooldownSeconds") or cooldown_sec
         )
         if _xt_check_and_mark(tid, employee_no, xt_window, now_dt.timestamp()):
-            _mark_recent(tid, employee_no, terminal_id, now_dt)
+            _mark_recent(tid, employee_no, terminal_id, now_dt, decision)
             print(f"  ⏸  Cross-terminal dedup — {chap_summary['name']} @ "
                   f"{device_name} (ok card already fired at another terminal "
                   f"within {int(xt_window)}s) — skipped")
             return None
 
     # Mark this scan as recent so the next one within cooldown is skipped.
-    _mark_recent(tid, employee_no, terminal_id, now_dt)
+    _mark_recent(tid, employee_no, terminal_id, now_dt, decision)
 
     # now a pure display concern (handled per-profile in the TV feed) so we
     # do NOT colour by time-of-day here — a single source of truth lives in
