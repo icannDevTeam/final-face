@@ -43,6 +43,7 @@ const NAV_SECTIONS = [
       { href: '/v2/email-hub', icon: 'ph-megaphone', label: 'Email Hub' },
       { href: '/v2/student-class-management', icon: 'ph-student', label: 'Student & Class Management' },
       { href: '/v2/pickup-enroll', icon: 'ph-fingerprint', label: 'Chaperone Enrolment' },
+      { href: '/v2/pickup-map', icon: 'ph-map-pin', label: 'Chaperone Map' },
       { href: '/v2/terminals', icon: 'ph-fingerprint', label: 'Terminals' },
       { href: '/v2/release-groups', icon: 'ph-device-tablet-speaker', label: 'Release Groups (iPads)' },
       { href: '/v2/pickup-admin?view=settings', icon: 'ph-sliders', label: 'Pickup Settings' },

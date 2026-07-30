@@ -27,7 +27,6 @@ async function handler(req, res) {
   const bucket = getFirebaseStorage().bucket();
 
   const snap = await db.collection(tenancy.chaperonesPath(tid))
-    .orderBy('createdAt', 'desc')
     .limit(limit).get();
 
   const now = Date.now();
@@ -68,6 +67,8 @@ async function handler(req, res) {
       idNumber: c.idNumber || null,
       status: c.status || null,
       authorizedStudentIds,
+      studentClasses: Array.isArray(c.studentClasses) ? c.studentClasses.map(String).filter((v) => v && v !== 'null' && v !== 'undefined') : [],
+      studentGrades: Array.isArray(c.studentGrades) ? c.studentGrades.map(String).filter((v) => v && v !== 'null' && v !== 'undefined') : [],
       photoCount:
         (Array.isArray(c.facePaths) ? c.facePaths.length : 0) ||
         (Array.isArray(c.photoUrls) ? c.photoUrls.length : 0),
@@ -112,15 +113,21 @@ async function handler(req, res) {
   const studentMetaById = await loadStudentMetaById(db, tid, Array.from(studentIdSet));
   const items = baseItems.map((item) => {
     const linkedStudents = item.authorizedStudentIds
-      .map((sid) => studentMetaById[sid])
+      .map((sid) => studentMetaById[sid] || (sid ? { id: sid, name: null, homeroom: null, grade: null } : null))
       .filter(Boolean);
 
-    const classSet = new Set();
-    const gradeSet = new Set();
+    const classSet = new Set(item.studentClasses || []);
+    const gradeSet = new Set(item.studentGrades || []);
     linkedStudents.forEach((s) => {
       if (s.homeroom) classSet.add(s.homeroom);
       if (s.grade) gradeSet.add(s.grade);
     });
+    if (gradeSet.size === 0) {
+      for (const homeroom of classSet) {
+        const inferred = gradeFromHomeroom(homeroom);
+        if (inferred) gradeSet.add(inferred);
+      }
+    }
 
     return {
       ...item,
@@ -163,6 +170,14 @@ function tsToIso(v) {
   return null;
 }
 
+function gradeFromHomeroom(homeroom) {
+  if (!homeroom) return null;
+  const s = String(homeroom).trim().toUpperCase();
+  if (s.startsWith('EY')) return 'EY';
+  const match = s.match(/^(\d{1,2})/);
+  return match ? match[1] : null;
+}
+
 export default withApi(handler, { methods: ['GET'], permission: 'pickup_admin.view' });
 
 async function loadStudentMetaById(db, tenantId, studentIds) {
@@ -172,9 +187,13 @@ async function loadStudentMetaById(db, tenantId, studentIds) {
   const CHUNK = 120;
   for (let i = 0; i < studentIds.length; i += CHUNK) {
     const chunk = studentIds.slice(i, i + CHUNK);
-    const snaps = await Promise.all(
-      chunk.map((sid) => db.doc(`${tenancy.studentMetadataPath(tenantId)}/${sid}`).get().catch(() => null))
-    );
+    const snaps = await Promise.all(chunk.map(async (sid) => {
+      const metaSnap = await db.doc(`${tenancy.studentMetadataPath(tenantId)}/${sid}`).get().catch(() => null);
+      if (metaSnap?.exists) return metaSnap;
+      const studentSnap = await db.doc(`${tenancy.studentsPath(tenantId)}/${sid}`).get().catch(() => null);
+      if (studentSnap?.exists) return studentSnap;
+      return await db.doc(`students/${sid}`).get().catch(() => null);
+    }));
 
     snaps.forEach((snap, idx) => {
       if (!snap?.exists) return;
