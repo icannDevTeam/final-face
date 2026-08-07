@@ -24,27 +24,36 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+from typing import Optional
 
 PROJECT = "facial-attendance-binus"
 METRIC = "firestore.googleapis.com/document/read_count"
 WIB = dt.timezone(dt.timedelta(hours=7))
 DEFAULT_WINDOW = (12 * 60, 15 * 60 + 30)
 WINDOW_BY_WEEKDAY = {
+    "mon": (11 * 60 + 30, 15 * 60 + 30),
     "fri": (10 * 60 + 40, 12 * 60 + 30),
+    "sat": None,
+    "sun": None,
 }
 WEEKDAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 READ_PRICE_PER_DOC = 0.00000038  # asia-southeast2 (Jakarta), 2026-08 catalog
 
 
-def window_for_wib_time(d: dt.datetime) -> tuple[int, int]:
+def window_for_wib_time(d: dt.datetime) -> tuple[Optional[int], Optional[int]]:
     """Return (open_minute, close_minute) for the WIB weekday of datetime d."""
     key = WEEKDAY_KEYS[d.weekday()]
-    return WINDOW_BY_WEEKDAY.get(key, DEFAULT_WINDOW)
+    win = WINDOW_BY_WEEKDAY.get(key, DEFAULT_WINDOW)
+    if win is None:
+        return (None, None)
+    return win
 
 
 def bucket_overlaps_window(start_minute: int, end_minute: int,
-                           open_minute: int, close_minute: int) -> bool:
+                           open_minute: Optional[int], close_minute: Optional[int]) -> bool:
     """True if a [start,end) hourly bucket overlaps today's dismissal window."""
+    if open_minute is None or close_minute is None:
+        return False
     return max(start_minute, open_minute) < min(end_minute, close_minute)
 
 

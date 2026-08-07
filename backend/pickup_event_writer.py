@@ -105,6 +105,8 @@ def _get_db():
 
 
 _terminal_group_cache: dict[str, tuple[float, Optional[str]]] = {}
+# Cache release-group docs for grade-timing lookups.
+_release_group_doc_cache: dict[str, tuple[float, dict]] = {}
 # Keep pairing resolution fresh: a just-paired/re-paired iPad should stop
 # dropping cards after the next scan, not after a minute-old cache expires.
 _TERMINAL_CACHE_TTL = 5.0
@@ -176,6 +178,24 @@ def _resolve_release_group_id(db, tid: str, terminal_id: Optional[str]) -> Optio
     else:
         _terminal_group_cache.pop(key, None)
     return rg
+
+
+def _get_release_group_doc_cached(db, tid: str, release_group_id: Optional[str]) -> dict:
+    """Cached read for tenants/{tid}/release_groups/{id}."""
+    if not release_group_id:
+        return {}
+    import time as _time
+    key = f"{tid}|{release_group_id}"
+    cached = _release_group_doc_cache.get(key)
+    if cached and _time.time() - cached[0] < _HOT_CACHE_TTL:
+        return cached[1]
+    try:
+        snap = db.document(f"{tenancy.release_groups_path(tid)}/{release_group_id}").get()
+        data = snap.to_dict() if snap.exists else {}
+    except Exception:
+        data = {}
+    _release_group_doc_cache[key] = (_time.time(), data or {})
+    return data or {}
 
 
 def _get_pickup_settings(tid: str) -> dict:
@@ -269,18 +289,101 @@ def _hhmm_to_minutes(s: Optional[str]) -> Optional[int]:
         return None
 
 
-def _resolve_window(db, tid: str, terminal_id: Optional[str]) -> Optional[dict]:
-    """Per-terminal window first, tenant-default second, else None.
+_WEEKDAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
-    Returns {"open": HH:MM, "close": HH:MM} or None for always-open.
+
+def _grade_window_aliases(token: str) -> set[str]:
+    """Normalize grade labels so G1 and 1 can resolve the same window."""
+    raw = str(token or "").strip().upper()
+    if not raw:
+        return set()
+    out = {raw}
+    if raw.isdigit():
+        out.add(f"G{raw}")
+    if raw.startswith("G") and raw[1:].isdigit():
+        out.add(raw[1:])
+    return out
+
+
+def _pick_grade_window(grade_window_by_label: dict,
+                       student_grade_tokens: set[str]) -> Optional[dict]:
+    """Select first matching {open, close} window from a grade window map.
+
+    Supported input shape:
+      {
+        "G1": {"open": "12:00", "close": "14:30"},
+        "EY": {"start": "12:00", "end": "13:30"}
+      }
     """
+    if not isinstance(grade_window_by_label, dict) or not student_grade_tokens:
+        return None
+    normalized = {
+        str(k).strip().upper(): v
+        for k, v in grade_window_by_label.items()
+        if str(k).strip()
+    }
+    if not normalized:
+        return None
+
+    wanted: set[str] = set()
+    for token in student_grade_tokens:
+        wanted.update(_grade_window_aliases(token))
+
+    for key in sorted(wanted):
+        row = normalized.get(key)
+        if not isinstance(row, dict):
+            continue
+        w_open = row.get("open") or row.get("start")
+        w_close = row.get("close") or row.get("end")
+        if w_open and w_close:
+            return {"open": str(w_open), "close": str(w_close), "source": f"grade:{key}"}
+    return None
+
+
+def _resolve_window(db, tid: str, terminal_id: Optional[str],
+                    now_dt: Optional[datetime] = None,
+                    release_group_id: Optional[str] = None,
+                    student_grade_tokens: Optional[set[str]] = None) -> Optional[dict]:
+    """Day-of-week window first (school-wide early dismissal, e.g. Friday
+    11:30), then optional grade-specific release-group window, then per-terminal
+    window, then tenant default. None = always-open.
+
+    Weekly windows live in tenants/{tid}/settings/pickup.pickupWindowByDay,
+    and may also use {"closedAllDay": true} for full-day closure.
+
+    Returns {"open": HH:MM, "close": HH:MM} or None.
+    """
+    settings = _get_pickup_settings(tid)
     td = _get_terminal_doc_cached(db, tid, terminal_id)
+    if td and td.get("gateOverride") == "open":
+        return {"manualOpen": True}
+    if td and td.get("gateOverride") == "closed":
+        return {"closedAllDay": True}
+
+    if now_dt is not None:
+        by_day = settings.get("pickupWindowByDay") or {}
+        dw = by_day.get(_WEEKDAY_KEYS[now_dt.weekday()]) or {}
+        if dw.get("closedAllDay") is True:
+            return {"closedAllDay": True}
+        d_open = dw.get("start") or dw.get("open")
+        d_close = dw.get("end") or dw.get("close")
+        if d_open and d_close:
+            return {"open": d_open, "close": d_close}
+
+    if release_group_id and student_grade_tokens:
+        group = _get_release_group_doc_cached(db, tid, release_group_id)
+        grade_window = _pick_grade_window(
+            group.get("gradeWindowByLabel") or {},
+            student_grade_tokens,
+        )
+        if grade_window:
+            return {"open": grade_window["open"], "close": grade_window["close"]}
+
     if td:
         w_open = td.get("windowOpen")
         w_close = td.get("windowClose")
         if w_open and w_close:
             return {"open": w_open, "close": w_close}
-    settings = _get_pickup_settings(tid)
     pw = settings.get("pickupWindow") or {}
     if pw.get("start") and pw.get("end"):
         return {"open": pw["start"], "close": pw["end"]}
@@ -289,6 +392,10 @@ def _resolve_window(db, tid: str, terminal_id: Optional[str]) -> Optional[dict]:
 
 def _in_window(now_dt: datetime, window: dict, warmup_min: int) -> bool:
     """True if now_dt is within [open-warmup, close]. Handles overnight too."""
+    if window.get("manualOpen") is True:
+        return True
+    if window.get("closedAllDay") is True:
+        return False
     open_min = _hhmm_to_minutes(window.get("open"))
     close_min = _hhmm_to_minutes(window.get("close"))
     if open_min is None or close_min is None:
@@ -742,8 +849,13 @@ def record_pickup_event(
         student_ids = chaperone.get("authorizedStudentIds") or []
 
     students = _resolve_students(db, tid, student_ids)
+    student_grades: set[str] = set()
+    for s in students:
+        student_grades.update(_student_grade_tokens(s))
 
     now_dt = _now()
+    assignment_mode = "derived"
+    release_group_id = _resolve_release_group_id(db, tid, terminal_id)
 
     # ── Wrong-terminal detection ─────────────────────────────────────────
     # If the terminal is grade-scoped and this chaperone has students but
@@ -751,21 +863,32 @@ def record_pickup_event(
     # so the bound iPad doesn't fire. (e.g. Grade 2 parent walking past the
     # GRADE 5 gate.) Unknown chaperones bypass this check.
     if decision == "ok" and students:
-        scopes = _terminal_grade_scopes(db, tid, terminal_id)
-        if scopes:
-            normalized_scopes = {str(s).strip().upper() for s in scopes if str(s).strip()}
-            student_grades: set[str] = set()
-            for s in students:
-                student_grades.update(_student_grade_tokens(s))
-            if student_grades and not (student_grades & normalized_scopes):
+        override_ids = {
+            str(x).strip()
+            for x in ((chaperone or {}).get("allowedTerminalIds") or [])
+            if str(x).strip()
+        }
+        if override_ids and (chaperone or {}).get("assignmentMode") == "override":
+            assignment_mode = "override"
+            active_terminal_id = str(terminal_id or "").strip()
+            if active_terminal_id and active_terminal_id not in override_ids:
                 decision = "wrong_terminal"
+        else:
+            scopes = _terminal_grade_scopes(db, tid, terminal_id)
+            if scopes:
+                normalized_scopes = {str(s).strip().upper() for s in scopes if str(s).strip()}
+                if student_grades and not (student_grades & normalized_scopes):
+                    decision = "wrong_terminal"
 
     # ── Cooldown + window guards ─────────────────────────────────────────
     # `silent` decisions are written for audit but suppressed from iPad feed.
     silent_decisions = {"unknown_chaperone", "wrong_terminal"}
     is_silent = decision in silent_decisions
     is_suspended = decision == "suspended"
-    cooldown_sec = int(settings.get("cooldownSeconds") or 600)
+    # NOTE: explicit 0 must DISABLE the cooldown — only fall back to the
+    # default when the field is absent/None (0 is falsy, so `or 600` is wrong).
+    _cd_raw = settings.get("cooldownSeconds")
+    cooldown_sec = 600 if _cd_raw is None else int(_cd_raw)
     warmup_min = int(settings.get("warmupMinutes") or 30)
     enforce_window = bool(settings.get("enforceWindow", True))
     inter_parent_sec = float(settings.get("interParentSeconds") or 2)
@@ -788,7 +911,14 @@ def record_pickup_event(
         # habitually scan before the warmup opens; those early rows must
         # never start a cooldown that delays the real pickup.
         if decision == "ok" and enforce_window:
-            window = _resolve_window(db, tid, terminal_id)
+            window = _resolve_window(
+                db,
+                tid,
+                terminal_id,
+                now_dt,
+                release_group_id=release_group_id,
+                student_grade_tokens=student_grades,
+            )
             if window and not _in_window(now_dt, window, warmup_min):
                 outside_window = True
                 decision = "outside_window"
@@ -804,9 +934,8 @@ def record_pickup_event(
     # Poles all face the same walkway, so 3-6 terminals can recognize the
     # same parent within seconds; only the FIRST terminal fires the card.
     if decision == "ok":
-        xt_window = float(
-            settings.get("crossTerminalCooldownSeconds") or cooldown_sec
-        )
+        _xt_raw = settings.get("crossTerminalCooldownSeconds")
+        xt_window = float(cooldown_sec if _xt_raw is None else _xt_raw)
         if _xt_check_and_mark(tid, employee_no, xt_window, now_dt.timestamp()):
             _mark_recent(tid, employee_no, terminal_id, now_dt, decision)
             print(f"  ⏸  Cross-terminal dedup — {chap_summary['name']} @ "
@@ -859,7 +988,6 @@ def record_pickup_event(
         except Exception:
             capture_path = None
 
-    release_group_id = _resolve_release_group_id(db, tid, terminal_id)
     if status == "pending" and not release_group_id:
         print(f"  ⚠ Pickup event has no releaseGroupId — iPad group feed may hide it ({device_name}, terminalId={terminal_id})")
 
@@ -876,6 +1004,7 @@ def record_pickup_event(
         "chaperone": chap_summary,
         "students": students,
         "decision": decision,
+        "assignmentMode": assignment_mode,
         "cardState": card_state,
         "status": status,
         "capturePath": capture_path,
