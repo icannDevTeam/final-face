@@ -4,7 +4,8 @@ check_read_pattern.py — Daily Firestore read-pattern sanity check.
 
 Pulls hourly document read counts from Cloud Monitoring for the last 36h,
 prints a WIB-hour histogram, and flags any hour OUTSIDE the dismissal window
-(12:00–19:00 WIB) that exceeds the leak threshold. Exits non-zero when a
+(Mon-Thu 12:00-15:30 WIB, Fri 10:40-12:30 WIB) that exceeds the leak threshold.
+Exits non-zero when a
 leak is detected so it can run under cron/CI.
 
 Auth: uses `gcloud auth print-access-token` (same pattern verified 2026-08-05).
@@ -27,9 +28,24 @@ import urllib.request
 PROJECT = "facial-attendance-binus"
 METRIC = "firestore.googleapis.com/document/read_count"
 WIB = dt.timezone(dt.timedelta(hours=7))
-WINDOW_START_HOUR = 12  # dismissal window opens (WIB) — EY dismisses 12:30
-WINDOW_END_HOUR = 19    # last expected activity (WIB)
+DEFAULT_WINDOW = (12 * 60, 15 * 60 + 30)
+WINDOW_BY_WEEKDAY = {
+    "fri": (10 * 60 + 40, 12 * 60 + 30),
+}
+WEEKDAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 READ_PRICE_PER_DOC = 0.00000038  # asia-southeast2 (Jakarta), 2026-08 catalog
+
+
+def window_for_wib_time(d: dt.datetime) -> tuple[int, int]:
+    """Return (open_minute, close_minute) for the WIB weekday of datetime d."""
+    key = WEEKDAY_KEYS[d.weekday()]
+    return WINDOW_BY_WEEKDAY.get(key, DEFAULT_WINDOW)
+
+
+def bucket_overlaps_window(start_minute: int, end_minute: int,
+                           open_minute: int, close_minute: int) -> bool:
+    """True if a [start,end) hourly bucket overlaps today's dismissal window."""
+    return max(start_minute, open_minute) < min(end_minute, close_minute)
 
 
 def access_token() -> str:
@@ -88,9 +104,13 @@ def main() -> int:
         reads = buckets[end_utc]
         total += reads
         end_wib = end_utc.astimezone(WIB)
-        # The bucket covers [end-1h, end); use the START hour for window check.
-        start_hour = (end_wib - dt.timedelta(hours=1)).hour
-        in_window = WINDOW_START_HOUR <= start_hour < WINDOW_END_HOUR
+        # The bucket covers [end-1h, end); treat it as in-window if any overlap
+        # exists with the configured 12:00-15:30 WIB dismissal window.
+        bucket_start = end_wib - dt.timedelta(hours=1)
+        start_minute = bucket_start.hour * 60 + bucket_start.minute
+        end_minute = start_minute + 60
+        open_minute, close_minute = window_for_wib_time(bucket_start)
+        in_window = bucket_overlaps_window(start_minute, end_minute, open_minute, close_minute)
         bar = "#" * max(1, round(40 * reads / peak)) if reads else ""
         flag = ""
         if not in_window and reads > args.threshold:
