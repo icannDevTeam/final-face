@@ -27,7 +27,10 @@ We do NOT touch real Firestore. The module under test is patched so:
 from __future__ import annotations
 
 import importlib
+import os
+import shutil
 import sys
+import tempfile
 import types
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -130,6 +133,17 @@ class PairingDB:
         return _Query(self.release_group_docs)
 
 
+class FakeWatchDB:
+    def __init__(self):
+        self.calls = []
+
+    def collection(self, _path):
+        class _Collection:
+            def on_snapshot(self, callback):
+                return types.SimpleNamespace(unsubscribe=lambda: None)
+        return _Collection()
+
+
 class PickupEventWriterTests(unittest.TestCase):
     """Each test gets a clean cache + fake DB + patched lookups."""
 
@@ -140,6 +154,7 @@ class PickupEventWriterTests(unittest.TestCase):
         pew._terminal_doc_cache.clear()
         pew._settings_cache.clear()
         pew._terminal_group_cache.clear()
+        pew._watch_handles.clear()
         pew._recent_scan_cache.clear()
         pew._recent_terminal_scan.clear()
 
@@ -163,9 +178,15 @@ class PickupEventWriterTests(unittest.TestCase):
         self._tid_patch = mock.patch.object(pew.tenancy, "get_tenant_id",
                                             return_value="binus-simprug")
         self._tid_patch.start()
+        # Isolate cross-terminal dedup state from prior runs/tests.
+        self._tmpdir = tempfile.mkdtemp(prefix="pickup-xt-", dir="/tmp")
+        self._xt_dedup_path = Path(self._tmpdir) / "xt_dedup.json"
+        self._xt_patch = mock.patch.object(pew, "_XT_DEDUP_FILE", str(self._xt_dedup_path))
+        self._xt_patch.start()
 
     def tearDown(self):
         mock.patch.stopall()
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     # ── helpers ─────────────────────────────────────────────────────────
     def _stub_lookups(self, *, chaperone=None, students=None, settings=None,
@@ -207,6 +228,17 @@ class PickupEventWriterTests(unittest.TestCase):
         )
         kwargs.update(overrides)
         return pew.record_pickup_event(**kwargs)
+
+    def test_realtime_watchers_disabled_by_default(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.object(pew, "_get_db", return_value=FakeWatchDB()):
+                self.assertFalse(pew.start_realtime_invalidation("binus-simprug"))
+
+    def test_realtime_watchers_can_be_enabled_with_env_flag(self):
+        with mock.patch.dict(os.environ, {"PICKUP_ENABLE_REALTIME_WATCHERS": "1"}, clear=True):
+            fake_db = FakeWatchDB()
+            with mock.patch.object(pew, "_get_db", return_value=fake_db):
+                self.assertTrue(pew.start_realtime_invalidation("binus-simprug"))
 
     def _written_event(self):
         """Return the single pickup_events doc that hit the fake DB."""
@@ -308,6 +340,44 @@ class PickupEventWriterTests(unittest.TestCase):
             settings={"cooldownSeconds": 0},
         )
         out = self._record(employee_no="9004")
+        doc = self._written_event()
+        self.assertEqual(doc["decision"], "wrong_terminal")
+        self.assertEqual(doc["cardState"], "silent")
+        self.assertEqual(doc["status"], "hidden")
+
+    def test_mixed_grade_family_passes_when_any_student_matches_pole(self):
+        # ANY-match policy (2026-08-19): a mixed-grade family goes green on a
+        # pole if at least one authorized student belongs to that grade.
+        self._stub_lookups(
+            chaperone={
+                "_id": "chap-9004b", "name": "Mixed Family",
+                "facePaths": [], "authorizedStudentIds": ["s1", "s2"],
+            },
+            students=[
+                {"id": "s1", "name": "EY Kid", "homeroom": "EY1"},
+                {"id": "s2", "name": "Grade 3 Kid", "homeroom": "3A"},
+            ],
+            grade_scopes=["3"],
+            settings={"cooldownSeconds": 0},
+        )
+        self._record(employee_no="9004b")
+        doc = self._written_event()
+        self.assertEqual(doc["decision"], "ok")
+        self.assertEqual(doc["cardState"], "green")
+
+    def test_no_student_match_is_rejected_on_wrong_pole(self):
+        self._stub_lookups(
+            chaperone={
+                "_id": "chap-9004c", "name": "Wrong Pole Family",
+                "facePaths": [], "authorizedStudentIds": ["s1"],
+            },
+            students=[
+                {"id": "s1", "name": "EY Kid", "homeroom": "EY1"},
+            ],
+            grade_scopes=["3"],
+            settings={"cooldownSeconds": 0},
+        )
+        self._record(employee_no="9004c")
         doc = self._written_event()
         self.assertEqual(doc["decision"], "wrong_terminal")
         self.assertEqual(doc["cardState"], "silent")
