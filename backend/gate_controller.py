@@ -33,8 +33,9 @@ from datetime import datetime, timezone, timedelta
 import requests
 
 WIB = timezone(timedelta(hours=7))
-POLL_SECS = int(os.getenv("GATE_POLL_SECS", "5"))           # how often we read Firestore
+POLL_SECS = int(os.getenv("GATE_POLL_SECS", "15"))          # how often we read Firestore (default 15s, still responsive)
 HEARTBEAT_SECS = int(os.getenv("GATE_HEARTBEAT_SECS", "120"))  # re-issue same cmd every 2min
+WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
 def _hhmm_to_minutes(s):
@@ -54,6 +55,23 @@ def _wib_minutes(now=None):
     return now.hour * 60 + now.minute
 
 
+def _weekly_window_for_terminal(terminal_doc, now=None):
+    now = now or datetime.now(WIB)
+    by_day = (terminal_doc or {}).get("weeklyWindowByDay") or {}
+    if not isinstance(by_day, dict):
+        return None
+    row = by_day.get(WEEKDAY_KEYS[now.weekday()]) or {}
+    if not isinstance(row, dict):
+        return None
+    if row.get("closedAllDay") is True:
+        return {"closedAllDay": True}
+    w_open = row.get("start") or row.get("open")
+    w_close = row.get("end") or row.get("close")
+    if _hhmm_to_minutes(w_open) is None or _hhmm_to_minutes(w_close) is None:
+        return None
+    return {"open": str(w_open), "close": str(w_close)}
+
+
 def compute_desired(terminal_doc, now=None):
     """Return ('alwaysOpen'|'alwaysClose'|'resume', reason)."""
     override = terminal_doc.get("gateOverride") if terminal_doc else None
@@ -61,6 +79,19 @@ def compute_desired(terminal_doc, now=None):
         return "alwaysClose", "manual-closed"
     if override == "open":
         return "alwaysOpen", "manual-open"
+
+    weekly = _weekly_window_for_terminal(terminal_doc, now)
+    if weekly:
+        if weekly.get("closedAllDay") is True:
+            return "alwaysClose", "weekly-closed-all-day"
+        open_min = _hhmm_to_minutes(weekly.get("open"))
+        close_min = _hhmm_to_minutes(weekly.get("close"))
+        cur = _wib_minutes(now)
+        if open_min <= close_min:
+            in_window = open_min <= cur <= close_min
+        else:
+            in_window = cur >= open_min or cur <= close_min
+        return ("alwaysOpen", "weekly-in-window") if in_window else ("alwaysClose", "weekly-out-of-window")
 
     open_min = _hhmm_to_minutes(terminal_doc.get("windowOpen") if terminal_doc else None)
     close_min = _hhmm_to_minutes(terminal_doc.get("windowClose") if terminal_doc else None)
@@ -166,13 +197,14 @@ def hik_remote_control_door(hik_ip, build_auth, cmd, door_no=1, timeout=8, log=p
     (so we reuse the listener's existing digest implementation).
     """
     uri = f"/ISAPI/AccessControl/RemoteControl/door/{door_no}"
-    body = {"RemoteControlDoor": {"cmd": cmd}}
+    # DS-K1T341AMF firmware rejects the JSON form of this command — XML only.
+    body = f"<RemoteControlDoor><cmd>{cmd}</cmd></RemoteControlDoor>"
     try:
         auth = build_auth("PUT", uri)
         r = requests.put(
             f"http://{hik_ip}{uri}",
-            json=body,
-            headers={"Authorization": auth, "Content-Type": "application/json"},
+            data=body.encode("utf-8"),
+            headers={"Authorization": auth, "Content-Type": "application/xml"},
             timeout=timeout,
         )
         if r.status_code == 401:
