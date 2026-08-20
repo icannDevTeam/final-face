@@ -340,6 +340,26 @@ def _pick_grade_window(grade_window_by_label: dict,
     return None
 
 
+def _pick_terminal_weekly_window(terminal_doc: Optional[dict],
+                                 now_dt: Optional[datetime]) -> Optional[dict]:
+    """Per-terminal weeklyWindowByDay beats tenant-wide weekly windows."""
+    if not terminal_doc or now_dt is None:
+        return None
+    by_day = terminal_doc.get("weeklyWindowByDay") or {}
+    if not isinstance(by_day, dict):
+        return None
+    row = by_day.get(_WEEKDAY_KEYS[now_dt.weekday()]) or {}
+    if not isinstance(row, dict):
+        return None
+    if row.get("closedAllDay") is True:
+        return {"closedAllDay": True}
+    w_open = row.get("start") or row.get("open")
+    w_close = row.get("end") or row.get("close")
+    if not w_open or not w_close:
+        return None
+    return {"open": str(w_open), "close": str(w_close), "source": "terminal_weekly"}
+
+
 def _resolve_window(db, tid: str, terminal_id: Optional[str],
                     now_dt: Optional[datetime] = None,
                     release_group_id: Optional[str] = None,
@@ -359,6 +379,10 @@ def _resolve_window(db, tid: str, terminal_id: Optional[str],
         return {"manualOpen": True}
     if td and td.get("gateOverride") == "closed":
         return {"closedAllDay": True}
+
+    terminal_weekly = _pick_terminal_weekly_window(td, now_dt)
+    if terminal_weekly:
+        return terminal_weekly
 
     if now_dt is not None:
         by_day = settings.get("pickupWindowByDay") or {}
@@ -536,6 +560,24 @@ def _student_grade_tokens(student: dict) -> set[str]:
         return {ey_token, "EY"}
 
     return set()
+
+
+def _grade_tokens_match_terminal_scopes(student_grade_tokens: set[str], terminal_scopes: set[str]) -> bool:
+    """True when a student's grade tokens are compatible with the terminal's scope.
+
+    This supports both exact scopes (e.g. "3" or "EY1") and broad scopes
+    (e.g. "EY" or "G3" alias forms). A mixed-family parent should only pass
+    on a pole if every one of their authorized students matches that pole.
+    """
+    if not student_grade_tokens or not terminal_scopes:
+        return True
+    token_aliases = set()
+    for token in student_grade_tokens:
+        token_aliases.update(_grade_window_aliases(token))
+    scope_aliases = set()
+    for scope in terminal_scopes:
+        scope_aliases.update(_grade_window_aliases(scope))
+    return bool(token_aliases & scope_aliases)
 
 
 def _resolve_chaperone(db, tid: str, employee_no: str) -> Optional[dict]:
@@ -720,11 +762,22 @@ def prewarm_caches(tenant_id: Optional[str] = None) -> dict:
 
 
 def start_realtime_invalidation(tenant_id: Optional[str] = None) -> bool:
-    """Attach Firestore on_snapshot watchers so admin edits to chaperones/
-    students immediately invalidate the in-process cache. Combined with the
-    5-minute TTL, this gives near-instant propagation of suspensions, photo
-    updates, etc., without re-reading on every scan.
+    """Attach Firestore on_snapshot watchers only when explicitly enabled.
+
+    Real-time invalidation is optional because it can create extra Firestore
+    listeners and adds operational cost. Default to off unless the environment
+    explicitly opts in for a tenant.
     """
+    env_enabled = os.environ.get("PICKUP_ENABLE_REALTIME_WATCHERS", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+    if not env_enabled:
+        handles = _watch_handles.pop(tenant_id or tenancy.get_tenant_id(), [])
+        for handle in handles:
+            try:
+                handle.unsubscribe()
+            except Exception:
+                pass
+        return False
+
     db = _get_db()
     if not db:
         return False
@@ -850,8 +903,11 @@ def record_pickup_event(
 
     students = _resolve_students(db, tid, student_ids)
     student_grades: set[str] = set()
+    student_grade_sets: list[set[str]] = []
     for s in students:
-        student_grades.update(_student_grade_tokens(s))
+        tokens = _student_grade_tokens(s)
+        student_grade_sets.append(tokens)
+        student_grades.update(tokens)
 
     now_dt = _now()
     assignment_mode = "derived"
@@ -877,8 +933,15 @@ def record_pickup_event(
             scopes = _terminal_grade_scopes(db, tid, terminal_id)
             if scopes:
                 normalized_scopes = {str(s).strip().upper() for s in scopes if str(s).strip()}
-                if student_grades and not (student_grades & normalized_scopes):
-                    decision = "wrong_terminal"
+                if student_grade_sets and any(gs for gs in student_grade_sets):
+                    # ANY-match: a mixed-grade family passes if at least one
+                    # authorized student belongs to this pole's grade.
+                    if not any(
+                        _grade_tokens_match_terminal_scopes(gs, normalized_scopes)
+                        for gs in student_grade_sets
+                        if gs
+                    ):
+                        decision = "wrong_terminal"
 
     # ── Cooldown + window guards ─────────────────────────────────────────
     # `silent` decisions are written for audit but suppressed from iPad feed.
