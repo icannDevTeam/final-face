@@ -867,6 +867,17 @@ def record_pickup_event(
 
     tid = tenant_id or tenancy.get_tenant_id()
     settings = _get_pickup_settings(tid)
+
+    # Hard gate: outside the pickup window the backend goes fully idle —
+    # no chaperone/student reads, no event writes (Firestore cost control).
+    # Window resolution uses 60s/5min caches, so this check is ~free.
+    if bool(settings.get("enforceWindow", True)):
+        _gate_now = _now()
+        _gate_win = _resolve_window(db, tid, terminal_id, _gate_now)
+        if _gate_win and not _in_window(_gate_now, _gate_win, int(settings.get("warmupMinutes") or 30)):
+            print(f"  \U0001f4a4 Outside pickup window — scan ignored, no Firestore activity ({device_name})")
+            return None
+
     chaperone = _resolve_chaperone(db, tid, employee_no)
     reenroll_overdue = False
 

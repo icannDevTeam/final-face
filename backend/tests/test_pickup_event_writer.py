@@ -444,8 +444,9 @@ class PickupEventWriterTests(unittest.TestCase):
         self.assertLessEqual(pew._TERMINAL_CACHE_TTL, 5.0)
 
     # ── 6. Outside-window → info card ───────────────────────────────────
-    def test_outside_window_emits_info_card(self):
-        # Set "now" to 09:00 WIB — well before any pickupWindow open.
+    def test_outside_window_is_fully_idle(self):
+        # 2026-08-20 cost policy: outside the pickup window the writer must
+        # not read chaperones/students or write ANY event doc.
         early = datetime(2026, 5, 25, 9, 0, 0, tzinfo=WIB)
         mock.patch.object(pew, "_now", return_value=early).start()
         self._stub_lookups(
@@ -458,9 +459,8 @@ class PickupEventWriterTests(unittest.TestCase):
             window={"open": "14:00", "close": "16:00"},
         )
         out = self._record(employee_no="9006")
-        doc = self._written_event()
-        self.assertEqual(doc["decision"], "outside_window")
-        self.assertEqual(doc["cardState"], "info")
+        self.assertIsNone(out)
+        self.assertEqual(len(self.db.writes), 0)
 
     # ── 7. Chaperone with no authorized students → yellow ───────────────
     def test_no_students_emits_yellow(self):
