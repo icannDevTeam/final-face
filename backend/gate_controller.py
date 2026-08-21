@@ -33,9 +33,24 @@ from datetime import datetime, timezone, timedelta
 import requests
 
 WIB = timezone(timedelta(hours=7))
-POLL_SECS = int(os.getenv("GATE_POLL_SECS", "15"))          # how often we read Firestore (default 15s, still responsive)
+POLL_SECS = int(os.getenv("GATE_POLL_SECS", "15"))          # near-window Firestore poll
+IDLE_POLL_SECS = int(os.getenv("GATE_IDLE_POLL_SECS", "600"))  # far from any boundary
+BOUNDARY_MARGIN_MIN = int(os.getenv("GATE_BOUNDARY_MARGIN_MIN", "30"))
 HEARTBEAT_SECS = int(os.getenv("GATE_HEARTBEAT_SECS", "120"))  # re-issue same cmd every 2min
 WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def _minutes_to_next_boundary(terminal_doc, now=None):
+    """Minutes until today's nearest open/close edge; None when unknown."""
+    cur = _wib_minutes(now)
+    weekly = _weekly_window_for_terminal(terminal_doc, now)
+    o = c = None
+    if weekly and not weekly.get("closedAllDay"):
+        o = _hhmm_to_minutes(weekly.get("open")); c = _hhmm_to_minutes(weekly.get("close"))
+    elif terminal_doc:
+        o = _hhmm_to_minutes(terminal_doc.get("windowOpen")); c = _hhmm_to_minutes(terminal_doc.get("windowClose"))
+    dists = [b - cur for b in (o, c) if b is not None and b - cur >= 0]
+    return min(dists) if dists else None
 
 
 def _hhmm_to_minutes(s):
@@ -186,7 +201,18 @@ class GateEnforcer(threading.Thread):
                         self._last_send_ts = now_ts
             except Exception as e:
                 self.log(f"  ⚠ Gate enforcer loop error: {e}")
-            self._stop.wait(POLL_SECS)
+            # Cost control: far from any window boundary (and not manually
+            # overridden) there is nothing to react to — read Firestore every
+            # IDLE_POLL_SECS instead of hammering it at POLL_SECS all night.
+            interval = POLL_SECS
+            try:
+                if doc is not None and not (doc or {}).get("gateOverride"):
+                    dist = _minutes_to_next_boundary(doc)
+                    if dist is None or dist > BOUNDARY_MARGIN_MIN:
+                        interval = IDLE_POLL_SECS
+            except Exception:
+                pass
+            self._stop.wait(interval)
 
 
 def hik_remote_control_door(hik_ip, build_auth, cmd, door_no=1, timeout=8, log=print):
