@@ -198,21 +198,26 @@ def hik_remote_control_door(hik_ip, build_auth, cmd, door_no=1, timeout=8, log=p
     """
     uri = f"/ISAPI/AccessControl/RemoteControl/door/{door_no}"
     # DS-K1T341AMF firmware rejects the JSON form of this command — XML only.
-    body = f"<RemoteControlDoor><cmd>{cmd}</cmd></RemoteControlDoor>"
+    body = f"<RemoteControlDoor><cmd>{cmd}</cmd></RemoteControlDoor>".encode("utf-8")
+    url = f"http://{hik_ip}{uri}"
+    headers = {"Content-Type": "application/xml"}
     try:
         auth = build_auth("PUT", uri)
-        r = requests.put(
-            f"http://{hik_ip}{uri}",
-            data=body.encode("utf-8"),
-            headers={"Authorization": auth, "Content-Type": "application/xml"},
-            timeout=timeout,
-        )
-        if r.status_code == 401:
-            # Stale digest — the listener will refresh on next call.
-            log(f"  ⚠ Gate cmd '{cmd}' got 401 (stale digest); will retry")
-            return False
+        r = requests.put(url, data=body, headers={**headers, "Authorization": auth}, timeout=timeout)
         if 200 <= r.status_code < 300:
             return True
+        # Prebuilt digest header can be stale/URI-mismatched on some units —
+        # retry once with a fresh full digest handshake (what curl does).
+        pw = os.getenv("HIKVISION_PASS")
+        if pw:
+            from requests.auth import HTTPDigestAuth
+            r2 = requests.put(url, data=body, headers=headers,
+                              auth=HTTPDigestAuth(os.getenv("HIKVISION_USER", "admin"), pw),
+                              timeout=timeout)
+            if 200 <= r2.status_code < 300:
+                return True
+            log(f"  ⚠ Gate cmd '{cmd}' HTTP {r2.status_code}: {r2.text[:120]}")
+            return False
         log(f"  ⚠ Gate cmd '{cmd}' HTTP {r.status_code}: {r.text[:120]}")
         return False
     except requests.RequestException as e:
