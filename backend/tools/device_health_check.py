@@ -11,7 +11,10 @@ Auto-fix scope: clock/timezone only. Reboots are NOT automatic — a stalled
 device is reported so an operator can run --reboot <ip> explicitly.
 
 Usage:
-  python3 device_health_check.py               # check + auto-fix clocks
+  python3 device_health_check.py                  # check + auto-fix clocks
+  python3 device_health_check.py --kill-stalled   # also kill workers with no
+                                                  # stream connect (root only;
+                                                  # manager respawns → reconnect)
   python3 device_health_check.py --reboot 10.26.30.67
 """
 from __future__ import annotations
@@ -82,20 +85,80 @@ def reboot(ip: str) -> bool:
     return r.ok
 
 
-def recent_stream_connections() -> set[str]:
-    """Terminal names whose worker logged a stream connect since last service start."""
+def _service_start() -> str | None:
+    """ISO-ish timestamp of the last final-face-listeners start, for journalctl --since."""
     try:
         out = subprocess.run(
-            ["journalctl", "-u", "final-face-listeners", "--no-pager", "-n", "5000"],
-            capture_output=True, text=True, timeout=20).stdout
+            ["systemctl", "show", "final-face-listeners.service",
+             "--property=ActiveEnterTimestamp", "--value"],
+            capture_output=True, text=True, timeout=10).stdout.strip()
+        m = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", out)
+        return m.group(1) if m else None
     except Exception:
-        return set()
-    return set(re.findall(r"\[(Terminal \d+)\]\s+✓ Connected", out))
+        return None
+
+
+def _journal_grep(pattern: str) -> str:
+    """Matching journal lines since service start (full window, not last-N)."""
+    since = _service_start()
+    cmd = "journalctl -u final-face-listeners --no-pager"
+    cmd += f" --since '{since}'" if since else " -n 5000"
+    cmd += f" | grep -F {pattern!r} || true"
+    try:
+        return subprocess.run(cmd, shell=True, capture_output=True,
+                              text=True, timeout=30).stdout
+    except Exception:
+        return ""
+
+
+def recent_stream_connections() -> set[str]:
+    """Terminal names whose worker logged a stream connect since last service start."""
+    return set(re.findall(r"\[(Terminal \d+)\]\s+✓ Connected",
+                          _journal_grep("✓ Connected")))
+
+
+def worker_pids() -> dict[str, int]:
+    """Latest heartbeat PID per terminal from the manager's Running lines."""
+    pids: dict[str, int] = {}
+    for m in re.finditer(r"\[(Terminal \d+)\] ✓ Running \| PID (\d+)",
+                         _journal_grep("✓ Running | PID")):
+        pids[m.group(1)] = int(m.group(2))  # later lines overwrite → latest wins
+    return pids
+
+
+def kill_stalled_workers(stalled: list[str]) -> set[str]:
+    """Kill workers with no stream connect so the manager respawns them.
+
+    Returns the terminals that reconnected after remediation.
+    """
+    import time
+    pids = worker_pids()
+    for name in stalled:
+        pid = pids.get(name)
+        if not pid or not Path(f"/proc/{pid}").exists():
+            print(f"  {name}: no live worker PID found — skipping")
+            continue
+        try:
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
+            if "python" not in cmdline:
+                print(f"  {name}: PID {pid} is not a python worker — skipping")
+                continue
+            os.kill(pid, 15)
+            print(f"  {name}: killed worker PID {pid} — manager will respawn")
+        except PermissionError:
+            print(f"  {name}: PID {pid} kill denied (run as root for --kill-stalled)")
+        except ProcessLookupError:
+            print(f"  {name}: PID {pid} already gone")
+    print("  waiting 45s for respawn + stream reconnect...")
+    time.sleep(45)
+    return recent_stream_connections()
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--reboot", metavar="IP", help="explicitly reboot one device and exit")
+    ap.add_argument("--kill-stalled", action="store_true",
+                    help="kill workers with no stream connect so they respawn (root)")
     args = ap.parse_args()
 
     if args.reboot:
@@ -104,6 +167,7 @@ def main() -> int:
         return 0 if ok else 1
 
     problems = 0
+    stalled: list[str] = []
     connected = recent_stream_connections()
     host_now = datetime.now(WIB)
     for name, ip in TERMINALS.items():
@@ -132,8 +196,19 @@ def main() -> int:
             problems += 1
         if name not in connected:
             line.append("⚠ no stream connect logged since service start")
+            stalled.append(name)
             problems += 1
         print("  ".join(line))
+
+    if stalled and args.kill_stalled:
+        print(f"\nRemediating {len(stalled)} stalled worker(s): {', '.join(stalled)}")
+        reconnected = kill_stalled_workers(stalled)
+        for name in stalled:
+            if name in reconnected:
+                print(f"  {name}: ✓ reconnected")
+                problems -= 1
+            else:
+                print(f"  {name}: ✗ still no stream connect — needs operator")
 
     print(f"\n{'ALL HEALTHY' if problems == 0 else f'{problems} PROBLEM(S) — see above'}")
     return 0 if problems == 0 else 1
